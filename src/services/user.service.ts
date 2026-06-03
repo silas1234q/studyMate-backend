@@ -1,3 +1,4 @@
+import { clerkClient } from "@clerk/express";
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
 
@@ -17,6 +18,10 @@ export const saveOnboarding = async (clerkId: string, data: OnboardingInput) => 
     where: { userId: user.id },
     update: data,
     create: { userId: user.id, ...data },
+  });
+
+  await clerkClient.users.updateUserMetadata(clerkId, {
+    publicMetadata: { onboarded: true },
   });
 
   return preferences;

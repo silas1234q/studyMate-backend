@@ -10,15 +10,43 @@ export const onboardUser = catchAsync(async (req, res) => {
 
   const { educationLevel, studySessionDuration, learningGoal, explanationDepth, interests } = req.body;
 
-  if (
-    typeof educationLevel !== "number" ||
-    typeof studySessionDuration !== "number" ||
-    typeof explanationDepth !== "number" ||
-    typeof learningGoal !== "string" ||
-    !Array.isArray(interests)
-  ) {
-    throw new ValidationError("invalid onboarding data");
+  const error: Record<string, string> = {}
+
+  // if (
+  //   typeof educationLevel !== "number" ||
+  //   typeof studySessionDuration !== "number" ||
+  //   typeof explanationDepth !== "number" ||
+  //   typeof learningGoal !== "string" ||
+  //   !Array.isArray(interests)
+  // ) {
+  //   throw new ValidationError("invalid onboarding data");
+  // }
+
+  if (typeof educationLevel !== "number") {
+    error['educationLevel'] = "educationLevel must be a number";
   }
+
+  if (typeof studySessionDuration !== "number") {
+    error['studySessionDuration'] = "studySessionDuration must be a number";
+  }
+
+  if (typeof explanationDepth !== "number") {
+    error['explanationDepth'] = "explanationDepth must be a number";
+  }
+
+
+  if (typeof learningGoal !== "string") {
+    error['learningGoal'] = "learningGoal must be a string";
+  }
+
+  if (!Array.isArray(interests)) {
+    error['interests'] = "interests must be an array";
+  }
+
+  if (Object.keys(error).length > 0) {
+    throw new ValidationError(`invalid onboarding data ${error}`);
+  }
+
 
   const preferences = await saveOnboarding(userId, {
     educationLevel,
