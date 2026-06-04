@@ -2,6 +2,16 @@ import { clerkClient } from "@clerk/express";
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
 
+export const getUserPreferences = async (clerkId: string) => {
+  const user = await prisma.user.findUnique({
+    where: { clerkId },
+    include: { preferences: true },
+  });
+  if (!user) throw new NotFoundError("user");
+  if (!user.preferences) throw new NotFoundError("user preferences");
+  return user.preferences;
+};
+
 interface OnboardingInput {
   educationLevel: number;
   studySessionDuration: number;

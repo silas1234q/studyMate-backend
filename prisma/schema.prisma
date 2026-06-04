@@ -5,30 +5,91 @@ generator client {
 }
 datasource db {
   provider = "postgresql"
-  
+
 }
 
 model User {
-  id          String           @id @default(uuid())
-  clerkId     String           @unique
-  email       String           @unique
-  firstName   String
-  lastName    String
-  avatarUrl   String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  preferences UserPreferences?
+  id              String            @id @default(uuid())
+  clerkId         String            @unique
+  email           String            @unique
+  firstName       String
+  lastName        String
+  avatarUrl       String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  preferences     UserPreferences?
+  enrollments     Enrollment[]
+  topicCompletions TopicCompletion[]
+  chatMessages    ChatMessage[]
 }
 
 model UserPreferences {
-  id                    String   @id @default(uuid())
-  userId                String   @unique
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  educationLevel        Int
-  studySessionDuration  Int
-  learningGoal          String
-  explanationDepth      Int
-  interests             String[]
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  educationLevel       Int
+  studySessionDuration Int
+  learningGoal         String
+  explanationDepth     Int
+  interests            String[]
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model Course {
+  id          String       @id @default(uuid())
+  title       String
+  description String
+  color       String
+  icon        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  topics      Topic[]
+  enrollments Enrollment[]
+}
+
+model Topic {
+  id           String            @id @default(uuid())
+  courseId     String
+  course       Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title        String
+  order        Int
+  createdAt    DateTime          @default(now())
+  completions  TopicCompletion[]
+  chatMessages ChatMessage[]
+
+  @@unique([courseId, order])
+}
+
+model Enrollment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+model TopicCompletion {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId     String
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  completedAt DateTime @default(now())
+
+  @@unique([userId, topicId])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  createdAt DateTime @default(now())
 }
