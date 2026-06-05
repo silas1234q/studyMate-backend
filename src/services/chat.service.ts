@@ -43,5 +43,9 @@ Teaching style:
 - Keep a conversational, encouraging tone
 - Break down complex ideas into digestible parts
 - For the very first message in a conversation, open with a brief engaging intro to the topic, using one of their interests as an analogy if applicable
-- Ask follow-up questions to check understanding when appropriate`;
+- Ask follow-up questions to check understanding when appropriate
+
+Math formatting:
+- Always write mathematical expressions in LaTeX using $...$ for inline math (e.g. $x^2 + 1$) and $$...$$ on its own line for display/block equations
+- Never use plain parentheses like \\( ... \\) or \\[ ... \\] — use only $ and $$ delimiters`;
 }
