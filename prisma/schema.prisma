@@ -17,10 +17,11 @@ model User {
   avatarUrl       String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
-  preferences     UserPreferences?
-  enrollments     Enrollment[]
-  topicCompletions TopicCompletion[]
-  chatMessages    ChatMessage[]
+  preferences          UserPreferences?
+  enrollments          Enrollment[]
+  topicCompletions     TopicCompletion[]
+  chatMessages         ChatMessage[]
+  objectiveCoverages   UserObjectiveCoverage[]
 }
 
 model UserPreferences {
@@ -49,14 +50,15 @@ model Course {
 }
 
 model Topic {
-  id           String            @id @default(uuid())
+  id           String              @id @default(uuid())
   courseId     String
-  course       Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course       Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
   title        String
   order        Int
-  createdAt    DateTime          @default(now())
+  createdAt    DateTime            @default(now())
   completions  TopicCompletion[]
   chatMessages ChatMessage[]
+  objectives   LearningObjective[]
 
   @@unique([courseId, order])
 }
@@ -92,4 +94,27 @@ model ChatMessage {
   role      String
   content   String
   createdAt DateTime @default(now())
+}
+
+model LearningObjective {
+  id        String                  @id @default(uuid())
+  topicId   String
+  topic     Topic                   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  text      String
+  order     Int
+  createdAt DateTime                @default(now())
+  covered   UserObjectiveCoverage[]
+
+  @@unique([topicId, order])
+}
+
+model UserObjectiveCoverage {
+  id          String            @id @default(uuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  objectiveId String
+  objective   LearningObjective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+  coveredAt   DateTime          @default(now())
+
+  @@unique([userId, objectiveId])
 }

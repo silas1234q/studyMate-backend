@@ -12,10 +12,17 @@ export interface GeneratedPreview {
 }
 
 const FALLBACK_COLORS = [
-  "#6541F0", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#8B5CF6",
+  "#6541F0",
+  "#EC4899",
+  "#F59E0B",
+  "#10B981",
+  "#3B82F6",
+  "#8B5CF6",
 ];
 
-async function generateCourseStructure(title: string): Promise<GeneratedPreview> {
+async function generateCourseStructure(
+  title: string,
+): Promise<GeneratedPreview> {
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },
@@ -48,19 +55,21 @@ async function generateCourseStructure(title: string): Promise<GeneratedPreview>
   };
 }
 
-export const generateTopicsPreview = async (title: string): Promise<GeneratedPreview> => {
+export const generateTopicsPreview = async (
+  title: string,
+): Promise<GeneratedPreview> => {
   return generateCourseStructure(title);
 };
 
 export const createCourse = async (
   clerkId: string,
   title: string,
-  preview?: GeneratedPreview
+  preview?: GeneratedPreview,
 ) => {
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");
 
-  const generated = preview ?? await generateCourseStructure(title);
+  const generated = preview ?? (await generateCourseStructure(title));
 
   const course = await prisma.$transaction(async (tx) => {
     const newCourse = await tx.course.create({
@@ -89,7 +98,12 @@ export const createCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
-    topics: course.topics.map((t) => ({ id: t.id, title: t.title, order: t.order, completed: false })),
+    topics: course.topics.map((t) => ({
+      id: t.id,
+      title: t.title,
+      order: t.order,
+      completed: false,
+    })),
     totalTopics: course.topics.length,
     topicsCompleted: 0,
     progressPercent: 0,
@@ -117,8 +131,8 @@ export const getUserCourses = async (clerkId: string) => {
           userId: user.id,
           topicId: { in: course.topics.map((t) => t.id) },
         },
-      })
-    )
+      }),
+    ),
   );
 
   return enrollments.map(({ course }, i) => {
@@ -176,14 +190,15 @@ export const getCourseById = async (clerkId: string, courseId: string) => {
     topics,
     totalTopics: total,
     topicsCompleted,
-    progressPercent: total > 0 ? Math.round((topicsCompleted / total) * 100) : 0,
+    progressPercent:
+      total > 0 ? Math.round((topicsCompleted / total) * 100) : 0,
   };
 };
 
 export const completeTopic = async (
   clerkId: string,
   courseId: string,
-  topicId: string
+  topicId: string,
 ) => {
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");
