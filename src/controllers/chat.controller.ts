@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import { getAuth } from "@clerk/express";
 import { getUserPreferences } from "../services/user.service";
 import { buildSystemPrompt } from "../services/chat.service";
+import prisma from "../config/db.config";
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 interface ChatMessage {
@@ -17,10 +19,12 @@ export async function handleTopicChat(req: Request, res: Response) {
     return;
   }
 
-  const { courseTitle, topicName, messages } = req.body as {
+  const { courseTitle, topicName, messages, topicId, userMessage } = req.body as {
     courseTitle: string;
     topicName: string;
     messages: ChatMessage[];
+    topicId?: string;
+    userMessage?: string;
   };
 
   if (!courseTitle || !topicName || !Array.isArray(messages)) {
@@ -29,7 +33,18 @@ export async function handleTopicChat(req: Request, res: Response) {
   }
 
   try {
-    const prefs = await getUserPreferences(userId);
+    const [prefs, dbUser] = await Promise.all([
+      getUserPreferences(userId),
+      prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } }),
+    ]);
+
+    // Persist the user's message
+    if (topicId && userMessage && dbUser) {
+      await prisma.chatMessage.create({
+        data: { userId: dbUser.id, topicId, role: "user", content: userMessage },
+      });
+    }
+
     const systemPrompt = buildSystemPrompt(prefs, courseTitle, topicName);
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -44,11 +59,20 @@ export async function handleTopicChat(req: Request, res: Response) {
       messages: [{ role: "system", content: systemPrompt }, ...messages],
     });
 
+    let fullResponse = "";
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content ?? "";
       if (delta) {
+        fullResponse += delta;
         res.write(`data: ${JSON.stringify({ delta })}\n\n`);
       }
+    }
+
+    // Persist the assistant's response
+    if (topicId && fullResponse && dbUser) {
+      await prisma.chatMessage.create({
+        data: { userId: dbUser.id, topicId, role: "assistant", content: fullResponse },
+      });
     }
 
     res.write("data: [DONE]\n\n");
@@ -61,4 +85,28 @@ export async function handleTopicChat(req: Request, res: Response) {
       res.end();
     }
   }
+}
+
+export async function getTopicChatHistory(req: Request, res: Response) {
+  const { userId } = getAuth(req);
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const { topicId } = req.params;
+
+  const dbUser = await prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } });
+  if (!dbUser) {
+    res.status(404).json({ message: "User not found" });
+    return;
+  }
+
+  const messages = await prisma.chatMessage.findMany({
+    where: { userId: dbUser.id, topicId },
+    orderBy: { createdAt: "asc" },
+    select: { role: true, content: true },
+  });
+
+  res.json(messages);
 }

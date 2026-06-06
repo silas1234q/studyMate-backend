@@ -8,6 +8,7 @@ export const handleGetPreferences = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
   if (!userId) throw new AuthError("user not authenticated");
   const preferences = await getUserPreferences(userId);
+  console.log("user preferences", preferences);
   res.json(preferences);
 });
 
