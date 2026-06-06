@@ -2,7 +2,14 @@ import { catchAsync } from "../utils/catchAsync";
 import { getAuth } from "@clerk/express";
 import AuthError from "../errors/AuthError";
 import ValidationError from "../errors/ValidationError";
-import { saveOnboarding } from "../services/user.service";
+import { saveOnboarding, getUserPreferences } from "../services/user.service";
+
+export const handleGetPreferences = catchAsync(async (req, res) => {
+  const { userId } = getAuth(req);
+  if (!userId) throw new AuthError("user not authenticated");
+  const preferences = await getUserPreferences(userId);
+  res.json(preferences);
+});
 
 export const onboardUser = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);

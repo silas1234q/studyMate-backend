@@ -211,7 +211,7 @@ export const generateQuiz = async (
   await verifyAccess(clerkId, courseId, topicId);
 
   const conversation = body.messages
-    .slice(-30)
+    .slice(-15)
     .map((m) => `${m.role === "user" ? "Student" : "AI"}: ${m.content}`)
     .join("\n");
 
@@ -221,7 +221,7 @@ export const generateQuiz = async (
       : "(no specific objectives provided)";
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     response_format: { type: "json_object" },
     messages: [
       {
