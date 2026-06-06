@@ -95,6 +95,10 @@ export async function getTopicChatHistory(req: Request, res: Response) {
   }
 
   const { topicId } = req.params;
+  if (!topicId || Array.isArray(topicId)) {
+    res.status(400).json({ message: "Invalid topicId" });
+    return;
+  }
 
   const dbUser = await prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } });
   if (!dbUser) {
