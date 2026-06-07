@@ -13,12 +13,14 @@ async function verifyAccess(clerkId: string, courseId: string, topicId: string) 
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");
 
-  const enrollment = await prisma.enrollment.findUnique({
-    where: { userId_courseId: { userId: user.id, courseId } },
-  });
-  if (!enrollment) throw new NotFoundError("course");
+  const [enrollment, topic] = await Promise.all([
+    prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId: user.id, courseId } },
+    }),
+    prisma.topic.findFirst({ where: { id: topicId, courseId } }),
+  ]);
 
-  const topic = await prisma.topic.findFirst({ where: { id: topicId, courseId } });
+  if (!enrollment) throw new NotFoundError("course");
   if (!topic) throw new NotFoundError("topic");
 
   return { user, topic };
@@ -202,18 +204,12 @@ export const generateQuiz = async (
   courseId: string,
   topicId: string,
   body: {
-    messages: Message[];
     objectives: string[];
     courseTitle: string;
     topicTitle: string;
   }
 ) => {
   await verifyAccess(clerkId, courseId, topicId);
-
-  const conversation = body.messages
-    .slice(-15)
-    .map((m) => `${m.role === "user" ? "Student" : "AI"}: ${m.content}`)
-    .join("\n");
 
   const objectivesList =
     body.objectives.length > 0
@@ -222,6 +218,7 @@ export const generateQuiz = async (
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
+    max_tokens: 1200,
     response_format: { type: "json_object" },
     messages: [
       {
@@ -234,12 +231,11 @@ export const generateQuiz = async (
           `Create exactly 5 multiple-choice questions to assess understanding of "${body.topicTitle}" ` +
           `from the course "${body.courseTitle}".\n\n` +
           `LEARNING OBJECTIVES:\n${objectivesList}\n\n` +
-          `CONVERSATION CONTEXT:\n${conversation}\n\n` +
           `Requirements:\n` +
           `- Each question has exactly 4 answer options\n` +
           `- One clearly correct answer per question\n` +
           `- Include a brief explanation of why the correct answer is right\n` +
-          `- Questions should test the objectives and concepts from the conversation\n` +
+          `- Questions should test the learning objectives above\n` +
           `- Vary difficulty: mix recall, comprehension, and application questions\n\n` +
           `Return JSON:\n` +
           `{\n` +

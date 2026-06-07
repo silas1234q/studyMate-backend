@@ -69,24 +69,17 @@ export const handleGenerateQuiz = catchAsync(
     if (!userId) throw new AuthError("user not authenticated");
     const courseId = req.params.courseId as string;
     const topicId = req.params.topicId as string;
-    const { messages, objectives, courseTitle, topicTitle } = req.body as {
-      messages?: Array<{ role: string; content: string }>;
+    const { objectives, courseTitle, topicTitle } = req.body as {
       objectives?: string[];
       courseTitle?: string;
       topicTitle?: string;
     };
-    if (
-      !Array.isArray(messages) ||
-      !Array.isArray(objectives) ||
-      !courseTitle ||
-      !topicTitle
-    ) {
+    if (!Array.isArray(objectives) || !courseTitle || !topicTitle) {
       throw new ValidationError(
-        "messages, objectives, courseTitle, and topicTitle are required"
+        "objectives, courseTitle, and topicTitle are required"
       );
     }
     const result = await generateQuiz(userId, courseId, topicId, {
-      messages,
       objectives,
       courseTitle,
       topicTitle,
