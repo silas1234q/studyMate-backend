@@ -7,6 +7,48 @@ import prisma from "../config/db.config";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "show_diagram",
+      description:
+        "Render a Mermaid.js diagram in the chat. Use for algorithms, flowcharts, " +
+        "sorting/searching, data structures, class diagrams, sequence diagrams, process flows.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: {
+            type: "string",
+            description: "Syntactically valid Mermaid.js code (max 12 nodes, concise labels).",
+          },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_illustration",
+      description:
+        "Show an AI-generated educational illustration. Use for biology, anatomy, chemistry, " +
+        "physics phenomena, historical scenes — anything benefiting from a real-world image.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "Detailed image-generation prompt describing a clear, labelled educational diagram.",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+];
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -52,19 +94,81 @@ export async function handleTopicChat(req: Request, res: Response) {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const stream = await openai.chat.completions.create({
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const wantsVisual = /\b(show|draw|visuali[sz]e|diagram|illustrate|depict|sketch|display|render)\b/i.test(lastUserMsg);
+
+    let fullResponse = "";
+
+    // ── Stream the text explanation ───────────────────────────────────────────
+    const textStream = await openai.chat.completions.create({
       model: "gpt-4o",
       max_tokens: 1024,
       stream: true,
       messages: [{ role: "system", content: systemPrompt }, ...messages],
     });
 
-    let fullResponse = "";
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content ?? "";
-      if (delta) {
-        fullResponse += delta;
-        res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+    for await (const chunk of textStream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ delta: content })}\n\n`);
+      }
+    }
+
+    // ── If user wants a visual, force a tool call in a second pass ───────────
+    if (wantsVisual) {
+      const visualMessages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        ...messages,
+        { role: "assistant", content: fullResponse },
+        {
+          role: "user",
+          content:
+            "Now call the appropriate tool (show_diagram or show_illustration) to produce the visual you just described.",
+        },
+      ];
+
+      let tcName = "";
+      let tcArgs = "";
+
+      const toolStream = await openai.chat.completions.create({
+        model: "gpt-4o",
+        max_tokens: 1024,
+        stream: true,
+        tools: VISUAL_TOOLS,
+        tool_choice: "required",
+        messages: visualMessages,
+      });
+
+      for await (const chunk of toolStream) {
+        const delta = chunk.choices[0]?.delta;
+        const finishReason = chunk.choices[0]?.finish_reason;
+
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.function?.name) tcName = tc.function.name;
+            if (tc.function?.arguments) tcArgs += tc.function.arguments;
+          }
+        }
+
+        if (finishReason === "tool_calls" && tcName) {
+          console.log(`[chat] tool called: ${tcName}, args: ${tcArgs}`);
+          try {
+            const args = JSON.parse(tcArgs) as Record<string, string>;
+            let fence = "";
+            if (tcName === "show_diagram" && args.code) {
+              fence = `\n\`\`\`mermaid\n${args.code}\n\`\`\`\n`;
+            } else if (tcName === "show_illustration" && args.prompt) {
+              fence = `\n\`\`\`illustration\n${args.prompt}\n\`\`\`\n`;
+            }
+            if (fence) {
+              fullResponse += fence;
+              res.write(`data: ${JSON.stringify({ delta: fence })}\n\n`);
+            }
+          } catch (e) {
+            console.error("[chat] failed to parse tool args:", e, tcArgs);
+          }
+        }
       }
     }
 
