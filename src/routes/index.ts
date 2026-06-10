@@ -4,6 +4,7 @@ import userRoutes from "./user.routes";
 import chatRoutes from "./chat.routes";
 import courseRoutes from "./course.routes";
 import illustrationsRoutes from "./illustrations.routes";
+import streakRoutes from "./streak.routes";
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use("/user", userRoutes);
 router.use("/chat", chatRoutes);
 router.use("/courses", courseRoutes);
 router.use("/illustrations", illustrationsRoutes);
+router.use("/streak", streakRoutes);
 
 export default router;

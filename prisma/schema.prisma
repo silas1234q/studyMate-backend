@@ -22,6 +22,8 @@ model User {
   topicCompletions     TopicCompletion[]
   chatMessages         ChatMessage[]
   objectiveCoverages   UserObjectiveCoverage[]
+  streak               UserStreak?
+  dailyActivities      DailyActivity[]
 }
 
 model UserPreferences {
@@ -43,6 +45,7 @@ model Course {
   description String
   color       String
   icon        String
+  imageUrl    String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   topics      Topic[]
@@ -117,4 +120,28 @@ model UserObjectiveCoverage {
   coveredAt   DateTime          @default(now())
 
   @@unique([userId, objectiveId])
+}
+
+model UserStreak {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak    Int      @default(0)
+  longestStreak    Int      @default(0)
+  totalXp          Int      @default(0)
+  dailyXp          Int      @default(0)
+  dailyXpGoal      Int      @default(200)
+  lastActivityDate String?
+  milestoneReached Int?
+  updatedAt        DateTime @updatedAt
+}
+
+model DailyActivity {
+  id                 String  @id @default(uuid())
+  userId             String
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date               String
+  chatMessageAwarded Boolean @default(false)
+
+  @@unique([userId, date])
 }

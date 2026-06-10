@@ -199,6 +199,54 @@ export const evaluateObjectives = async (
   return { coveredIndices };
 };
 
+export const addObjective = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+  text: string,
+) => {
+  await verifyAccess(clerkId, courseId, topicId);
+  const count = await prisma.learningObjective.count({ where: { topicId } });
+  const obj = await prisma.learningObjective.create({
+    data: { topicId, text, order: count },
+  });
+  return { id: obj.id, text: obj.text, order: obj.order, covered: false };
+};
+
+export const updateObjective = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+  objectiveId: string,
+  text: string,
+) => {
+  await verifyAccess(clerkId, courseId, topicId);
+  const obj = await prisma.learningObjective.findFirst({
+    where: { id: objectiveId, topicId },
+  });
+  if (!obj) throw new NotFoundError("objective");
+  const updated = await prisma.learningObjective.update({
+    where: { id: objectiveId },
+    data: { text },
+  });
+  return { id: updated.id, text: updated.text, order: updated.order };
+};
+
+export const deleteObjective = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+  objectiveId: string,
+) => {
+  await verifyAccess(clerkId, courseId, topicId);
+  const obj = await prisma.learningObjective.findFirst({
+    where: { id: objectiveId, topicId },
+  });
+  if (!obj) throw new NotFoundError("objective");
+  await prisma.learningObjective.delete({ where: { id: objectiveId } });
+  return { success: true };
+};
+
 export const generateQuiz = async (
   clerkId: string,
   courseId: string,

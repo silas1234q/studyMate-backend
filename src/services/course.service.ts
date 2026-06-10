@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import prisma from "../config/db.config";
+import cloudinary from "../config/cloudinary.config";
 import NotFoundError from "../errors/NotFoundError";
+import { awardTopicXp } from "./streak.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -9,6 +11,7 @@ export interface GeneratedPreview {
   icon: string;
   color: string;
   topics: string[];
+  imageUrl?: string | null;
 }
 
 const FALLBACK_COLORS = [
@@ -20,23 +23,56 @@ const FALLBACK_COLORS = [
   "#8B5CF6",
 ];
 
+async function generateCourseImage(title: string): Promise<string | null> {
+  try {
+    const response = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt: `A stunning, hyper-detailed digital artwork representing the subject of '${title}'. Cinematic lighting, rich colors, sharp focus, photorealistic or concept-art style. No text, no letters, no UI elements.`,
+    });
+
+    if (!response.data || response.data.length === 0) return null;
+
+    const b64 = response.data[0].b64_json;
+    if (!b64) return null;
+
+    const tempUrl = `data:image/png;base64,${b64}`;
+
+    const result = await cloudinary.uploader.upload(tempUrl, {
+      folder: "studymate-courses",
+      resource_type: "image",
+    });
+
+    console.log("Cloudinary upload result:", result);
+
+    return result.secure_url;
+  } catch (err) {
+    console.error("generateCourseImage error:", err);
+    return null;
+  }
+}
+
 async function generateCourseStructure(
   title: string,
 ): Promise<GeneratedPreview> {
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: "You are a curriculum designer. Return only valid JSON.",
-      },
-      {
-        role: "user",
-        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)`,
-      },
-    ],
-  });
+  const [completion, imageUrl] = await Promise.all([
+    openai.chat.completions.create({
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a curriculum designer. Return only valid JSON.",
+        },
+        {
+          role: "user",
+          content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)`,
+        },
+      ],
+    }),
+    generateCourseImage(title),
+  ]);
+
+  console.log(imageUrl ? "Generated course image URL:" : "No image generated", imageUrl);
 
   const raw = completion.choices[0].message.content ?? "{}";
   const parsed = JSON.parse(raw) as Partial<GeneratedPreview>;
@@ -52,6 +88,7 @@ async function generateCourseStructure(
       Array.isArray(parsed.topics) && parsed.topics.length > 0
         ? parsed.topics
         : ["Introduction", "Core Concepts", "Practice & Review"],
+    imageUrl,
   };
 }
 
@@ -78,6 +115,7 @@ export const createCourse = async (
         description: generated.description,
         icon: generated.icon,
         color: generated.color,
+        imageUrl: generated.imageUrl ?? null,
         topics: {
           create: generated.topics.map((t, i) => ({ title: t, order: i })),
         },
@@ -98,6 +136,7 @@ export const createCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
+    imageUrl: course.imageUrl ?? null,
     topics: course.topics.map((t) => ({
       id: t.id,
       title: t.title,
@@ -144,6 +183,8 @@ export const getUserCourses = async (clerkId: string) => {
       description: course.description,
       color: course.color,
       icon: course.icon,
+      imageUrl: course.imageUrl ?? null,
+      topicTitles: course.topics.map((t) => t.title),
       totalTopics: total,
       topicsCompleted: completed,
       progressPercent: total > 0 ? Math.round((completed / total) * 100) : 0,
@@ -187,12 +228,159 @@ export const getCourseById = async (clerkId: string, courseId: string) => {
     description: course.description,
     color: course.color,
     icon: course.icon,
+    imageUrl: course.imageUrl ?? null,
     topics,
     totalTopics: total,
     topicsCompleted,
     progressPercent:
       total > 0 ? Math.round((topicsCompleted / total) * 100) : 0,
   };
+};
+
+export const updateCourse = async (
+  clerkId: string,
+  courseId: string,
+  data: { title?: string; description?: string; icon?: string; color?: string },
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  const course = await prisma.course.update({
+    where: { id: courseId },
+    data,
+    include: { topics: { orderBy: { order: "asc" } } },
+  });
+
+  const completions = await prisma.topicCompletion.findMany({
+    where: { userId: user.id, topicId: { in: course.topics.map((t) => t.id) } },
+  });
+  const completedIds = new Set(completions.map((c) => c.topicId));
+  const topics = course.topics.map((t) => ({
+    id: t.id,
+    title: t.title,
+    order: t.order,
+    completed: completedIds.has(t.id),
+  }));
+  const topicsCompleted = topics.filter((t) => t.completed).length;
+  const total = topics.length;
+
+  return {
+    id: course.id,
+    title: course.title,
+    description: course.description,
+    color: course.color,
+    icon: course.icon,
+    imageUrl: course.imageUrl ?? null,
+    topics,
+    totalTopics: total,
+    topicsCompleted,
+    progressPercent: total > 0 ? Math.round((topicsCompleted / total) * 100) : 0,
+  };
+};
+
+export const deleteCourse = async (clerkId: string, courseId: string) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  await prisma.enrollment.delete({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+
+  return { success: true };
+};
+
+export const addTopic = async (
+  clerkId: string,
+  courseId: string,
+  title: string,
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  const count = await prisma.topic.count({ where: { courseId } });
+  const topic = await prisma.topic.create({
+    data: { courseId, title, order: count },
+  });
+
+  return { id: topic.id, title: topic.title, order: topic.order, completed: false };
+};
+
+export const updateTopic = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+  data: { title: string },
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  const topic = await prisma.topic.findFirst({ where: { id: topicId, courseId } });
+  if (!topic) throw new NotFoundError("topic");
+
+  const updated = await prisma.topic.update({ where: { id: topicId }, data });
+  return { id: updated.id, title: updated.title, order: updated.order };
+};
+
+export const deleteTopic = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  const topic = await prisma.topic.findFirst({ where: { id: topicId, courseId } });
+  if (!topic) throw new NotFoundError("topic");
+
+  await prisma.topic.delete({ where: { id: topicId } });
+  return { success: true };
+};
+
+export const reorderTopics = async (
+  clerkId: string,
+  courseId: string,
+  topicIds: string[],
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  await prisma.$transaction(
+    topicIds.map((id, index) =>
+      prisma.topic.update({ where: { id }, data: { order: index } }),
+    ),
+  );
+
+  return { success: true };
 };
 
 export const completeTopic = async (
@@ -213,11 +401,14 @@ export const completeTopic = async (
   });
   if (!topic) throw new NotFoundError("topic");
 
-  await prisma.topicCompletion.upsert({
+  const existing = await prisma.topicCompletion.findUnique({
     where: { userId_topicId: { userId: user.id, topicId } },
-    update: {},
-    create: { userId: user.id, topicId },
   });
+
+  if (!existing) {
+    await prisma.topicCompletion.create({ data: { userId: user.id, topicId } });
+    await awardTopicXp(user.id);
+  }
 
   return { success: true };
 };

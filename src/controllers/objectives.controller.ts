@@ -8,6 +8,9 @@ import {
   generateObjectives,
   evaluateObjectives,
   generateQuiz,
+  addObjective,
+  updateObjective,
+  deleteObjective,
 } from "../services/objectives.service";
 
 export const handleGetObjectives = catchAsync(
@@ -59,6 +62,57 @@ export const handleEvaluateObjectives = catchAsync(
       messages,
       objectiveTexts,
     });
+    res.json(result);
+  }
+);
+
+export const handleAddObjective = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) throw new AuthError("user not authenticated");
+    const { text } = req.body as { text?: string };
+    if (!text || typeof text !== "string" || !text.trim()) {
+      throw new ValidationError("text is required");
+    }
+    const result = await addObjective(
+      userId,
+      req.params.courseId as string,
+      req.params.topicId as string,
+      text.trim(),
+    );
+    res.status(201).json(result);
+  }
+);
+
+export const handleUpdateObjective = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) throw new AuthError("user not authenticated");
+    const { text } = req.body as { text?: string };
+    if (!text || typeof text !== "string" || !text.trim()) {
+      throw new ValidationError("text is required");
+    }
+    const result = await updateObjective(
+      userId,
+      req.params.courseId as string,
+      req.params.topicId as string,
+      req.params.objectiveId as string,
+      text.trim(),
+    );
+    res.json(result);
+  }
+);
+
+export const handleDeleteObjective = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) throw new AuthError("user not authenticated");
+    const result = await deleteObjective(
+      userId,
+      req.params.courseId as string,
+      req.params.topicId as string,
+      req.params.objectiveId as string,
+    );
     res.json(result);
   }
 );
