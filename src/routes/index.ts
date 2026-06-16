@@ -5,6 +5,7 @@ import chatRoutes from "./chat.routes";
 import courseRoutes from "./course.routes";
 import illustrationsRoutes from "./illustrations.routes";
 import streakRoutes from "./streak.routes";
+import quickChatRoutes from "./quickchat.routes";
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use("/chat", chatRoutes);
 router.use("/courses", courseRoutes);
 router.use("/illustrations", illustrationsRoutes);
 router.use("/streak", streakRoutes);
+router.use("/quick-chat", quickChatRoutes);
 
 export default router;

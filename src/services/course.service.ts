@@ -380,11 +380,27 @@ export const reorderTopics = async (
   });
   if (!enrollment) throw new NotFoundError("course");
 
-  await prisma.$transaction(
-    topicIds.map((id, index) =>
-      prisma.topic.update({ where: { id }, data: { order: index } }),
+  // Two-step raw SQL to avoid @@unique([courseId, order]) violation:
+  // 1. Move all orders to negative (unique, no collisions)
+  // 2. Set final values (all start negative, targets are unique non-negative)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!topicIds.every((id) => uuidRegex.test(id))) {
+    throw new Error("Invalid topic ID format");
+  }
+
+  const ids = topicIds.map((id) => `'${id}'`).join(", ");
+  const cases = topicIds
+    .map((id, i) => `WHEN "id" = '${id}' THEN ${i}`)
+    .join(" ");
+
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe(
+      `UPDATE "Topic" SET "order" = -("order" + 1) WHERE "id" IN (${ids})`,
     ),
-  );
+    prisma.$executeRawUnsafe(
+      `UPDATE "Topic" SET "order" = CASE ${cases} END WHERE "id" IN (${ids})`,
+    ),
+  ]);
 
   return { success: true };
 };
