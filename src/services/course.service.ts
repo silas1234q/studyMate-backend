@@ -54,25 +54,20 @@ async function generateCourseImage(title: string): Promise<string | null> {
 async function generateCourseStructure(
   title: string,
 ): Promise<GeneratedPreview> {
-  const [completion, imageUrl] = await Promise.all([
-    openai.chat.completions.create({
-      model: "gpt-4o",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You are a curriculum designer. Return only valid JSON.",
-        },
-        {
-          role: "user",
-          content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)`,
-        },
-      ],
-    }),
-    generateCourseImage(title),
-  ]);
-
-  console.log(imageUrl ? "Generated course image URL:" : "No image generated", imageUrl);
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: "You are a curriculum designer. Return only valid JSON.",
+      },
+      {
+        role: "user",
+        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)`,
+      },
+    ],
+  });
 
   const raw = completion.choices[0].message.content ?? "{}";
   const parsed = JSON.parse(raw) as Partial<GeneratedPreview>;
@@ -88,7 +83,7 @@ async function generateCourseStructure(
       Array.isArray(parsed.topics) && parsed.topics.length > 0
         ? parsed.topics
         : ["Introduction", "Core Concepts", "Practice & Review"],
-    imageUrl,
+    imageUrl: null,
   };
 }
 
@@ -130,7 +125,7 @@ export const createCourse = async (
     return newCourse;
   });
 
-  return {
+  const result = {
     id: course.id,
     title: course.title,
     description: course.description,
@@ -147,6 +142,17 @@ export const createCourse = async (
     topicsCompleted: 0,
     progressPercent: 0,
   };
+
+  // Fire-and-forget: generate course image in background
+  const courseId = course.id;
+  generateCourseImage(title).then(async (url) => {
+    if (url) {
+      await prisma.course.update({ where: { id: courseId }, data: { imageUrl: url } });
+      console.log("Background image gen completed for course:", courseId);
+    }
+  }).catch((err) => console.error("Background image gen failed:", err));
+
+  return result;
 };
 
 export const getUserCourses = async (clerkId: string) => {
