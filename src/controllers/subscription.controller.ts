@@ -16,8 +16,8 @@ import {
 const PLAN_CODES: Record<string, string | undefined> = {
   "monthly_GHS": process.env.PAYSTACK_PRO_MONTHLY_GHS_PLAN_CODE,
   "yearly_GHS": process.env.PAYSTACK_PRO_YEARLY_GHS_PLAN_CODE,
-  "monthly_USD": process.env.PAYSTACK_PRO_MONTHLY_USD_PLAN_CODE,
-  "yearly_USD": process.env.PAYSTACK_PRO_YEARLY_USD_PLAN_CODE,
+  "monthly_INT": process.env.PAYSTACK_PRO_MONTHLY_INT_PLAN_CODE,
+  "yearly_INT": process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,
 };
 
 export const handleGetSubscription = catchAsync(
@@ -34,25 +34,25 @@ export const handleInitiateUpgrade = catchAsync(
     const { userId } = getAuth(req);
     if (!userId) throw new AuthError("user not authenticated");
 
-    const { interval, currency, callbackUrl } = req.body as {
+    const { interval, region, callbackUrl } = req.body as {
       interval?: string;
-      currency?: string;
+      region?: string;
       callbackUrl?: string;
     };
 
     if (!interval || !["monthly", "yearly"].includes(interval)) {
       throw new ValidationError("interval must be 'monthly' or 'yearly'");
     }
-    if (!currency || !["GHS", "USD"].includes(currency)) {
-      throw new ValidationError("currency must be 'GHS' or 'USD'");
+    if (!region || !["GHS", "INT"].includes(region)) {
+      throw new ValidationError("region must be 'GHS' or 'INT'");
     }
     if (!callbackUrl) {
       throw new ValidationError("callbackUrl is required");
     }
 
-    const planCode = PLAN_CODES[`${interval}_${currency}`];
+    const planCode = PLAN_CODES[`${interval}_${region}`];
     if (!planCode) {
-      throw new ValidationError("Plan not configured for this interval/currency combination");
+      throw new ValidationError("Plan not configured for this interval/region combination");
     }
 
     const user = await prisma.user.findUnique({
@@ -65,7 +65,7 @@ export const handleInitiateUpgrade = catchAsync(
       user.email,
       planCode,
       callbackUrl,
-      { userId: user.id, clerkId: userId, interval, currency },
+      { userId: user.id, clerkId: userId, interval, region },
     );
 
     res.json({ authorizationUrl: result.authorization_url, reference: result.reference });
@@ -112,7 +112,7 @@ export const handleVerifyPayment = catchAsync(
     }
 
     const interval = txData.metadata?.interval ?? txData.plan_object?.interval ?? null;
-    const currency = txData.metadata?.currency ?? null;
+    const currency = txData.metadata?.region ?? txData.metadata?.currency ?? null;
 
     await prisma.subscription.upsert({
       where: { userId: user.id },
