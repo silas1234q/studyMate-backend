@@ -7,18 +7,20 @@ import ValidationError from "../errors/ValidationError";
 import prisma from "../config/db.config";
 import { getSubscriptionStatus } from "../services/subscription.service";
 import {
-  fetchPlan,
   initializeTransaction,
   verifyTransaction,
   cancelSubscription as paystackCancel,
   listCustomerSubscriptions,
 } from "../services/paystack.service";
 
-const PLAN_CODES: Record<string, string | undefined> = {
-  "monthly_GHS": process.env.PAYSTACK_PRO_MONTHLY_GHS_PLAN_CODE,
-  "yearly_GHS": process.env.PAYSTACK_PRO_YEARLY_GHS_PLAN_CODE,
-  "monthly_INT": process.env.PAYSTACK_PRO_MONTHLY_INT_PLAN_CODE,
-  "yearly_INT": process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,
+// Amounts in pesewas (Paystack API uses subunits). All plans are in GHS.
+// GHS plans: GHS 15/mo, GHS 50/yr
+// INT plans: GHS 30/mo, GHS 100/yr (equivalent of ~$3/mo, ~$10/yr)
+const PLANS: Record<string, { code: string | undefined; amount: number }> = {
+  "monthly_GHS": { code: process.env.PAYSTACK_PRO_MONTHLY_GHS_PLAN_CODE, amount: 1500 },
+  "yearly_GHS":  { code: process.env.PAYSTACK_PRO_YEARLY_GHS_PLAN_CODE,  amount: 5000 },
+  "monthly_INT": { code: process.env.PAYSTACK_PRO_MONTHLY_INT_PLAN_CODE, amount: 3000 },
+  "yearly_INT":  { code: process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,  amount: 10000 },
 };
 
 export const handleGetSubscription = catchAsync(
@@ -51,8 +53,9 @@ export const handleInitiateUpgrade = catchAsync(
       throw new ValidationError("callbackUrl is required");
     }
 
-    const planCode = PLAN_CODES[`${interval}_${region}`];
-    if (!planCode) {
+    const lookupKey = `${interval}_${region}`;
+    const plan = PLANS[lookupKey];
+    if (!plan?.code) {
       throw new ValidationError("Plan not configured for this interval/region combination");
     }
 
@@ -62,11 +65,9 @@ export const handleInitiateUpgrade = catchAsync(
     });
     if (!user) throw new AuthError("user not found");
 
-    const plan = await fetchPlan(planCode);
-
     const result = await initializeTransaction(
       user.email,
-      planCode,
+      plan.code,
       plan.amount,
       callbackUrl,
       { userId: user.id, clerkId: userId, interval, region },

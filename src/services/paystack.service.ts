@@ -20,15 +20,10 @@ async function paystackFetch(path: string, options: RequestInit = {}) {
   return data;
 }
 
-export async function fetchPlan(planCode: string) {
-  const data = await paystackFetch(`/plan/${encodeURIComponent(planCode)}`);
-  return data.data as { amount: number; currency: string; plan_code: string; interval: string };
-}
-
 export async function initializeTransaction(
   email: string,
   planCode: string,
-  amount: number,
+  amountInPesewas: number,
   callbackUrl: string,
   metadata: Record<string, string>,
 ) {
@@ -36,7 +31,7 @@ export async function initializeTransaction(
     method: "POST",
     body: JSON.stringify({
       email,
-      amount,
+      amount: amountInPesewas,
       plan: planCode,
       callback_url: callbackUrl,
       metadata,
