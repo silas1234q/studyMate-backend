@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
 import { awardTopicXp } from "./streak.service";
+import { checkCourseLimit } from "./subscription.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -67,6 +68,8 @@ export const createCourse = async (
   title: string,
   preview?: GeneratedPreview,
 ) => {
+  await checkCourseLimit(clerkId);
+
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");
 

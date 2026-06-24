@@ -4,11 +4,16 @@ import morgan from "morgan";
 import { clerkMiddleware } from "@clerk/express";
 import routes from "./routes";
 import { globalErrorHandler } from "./middleware/globalErrorHandler";
+import { handleWebhook } from "./controllers/subscription.controller";
 
 const app = express();
 
 app.use(cors());
 app.use(morgan("dev"));
+
+// Webhook needs raw body for HMAC verification — mount before express.json()
+app.post("/api/subscription/webhook", express.raw({ type: "application/json" }), handleWebhook);
+
 app.use(express.json());
 app.use(clerkMiddleware());
 

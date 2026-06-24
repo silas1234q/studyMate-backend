@@ -13,6 +13,7 @@ import {
   getDbUser,
 } from "../services/quickchat.service";
 import prisma from "../config/db.config";
+import { checkFeatureAccess, getAiModel } from "../services/subscription.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -47,6 +48,7 @@ export async function handleCreateConversation(req: Request, res: Response) {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
+  await checkFeatureAccess(userId, "quickChat");
   const convo = await createConversation(userId);
   res.status(201).json(convo);
 }
@@ -55,6 +57,7 @@ export async function handleListConversations(req: Request, res: Response) {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
+  await checkFeatureAccess(userId, "quickChat");
   const conversations = await listConversations(userId);
   res.json(conversations);
 }
@@ -80,6 +83,8 @@ export async function handleDeleteConversation(req: Request, res: Response) {
 export async function handleQuickChat(req: Request, res: Response) {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+
+  await checkFeatureAccess(userId, "quickChat");
 
   const { conversationId, messages, userMessage } = req.body as {
     conversationId: string;
@@ -114,7 +119,10 @@ export async function handleQuickChat(req: Request, res: Response) {
       await updateConversationTitle(conversationId, title);
     }
 
-    const prefs = await getUserPreferences(userId);
+    const [prefs, aiModel] = await Promise.all([
+      getUserPreferences(userId),
+      getAiModel(userId),
+    ]);
     const systemPrompt = buildQuickChatPrompt(prefs);
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -128,7 +136,7 @@ export async function handleQuickChat(req: Request, res: Response) {
     let fullResponse = "";
 
     const textStream = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: aiModel,
       max_tokens: 1024,
       stream: true,
       messages: [{ role: "system", content: systemPrompt }, ...messages],
@@ -159,7 +167,7 @@ export async function handleQuickChat(req: Request, res: Response) {
       let tcArgs = "";
 
       const toolStream = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: aiModel,
         max_tokens: 1024,
         stream: true,
         tools: VISUAL_TOOLS,

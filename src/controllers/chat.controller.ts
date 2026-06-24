@@ -4,6 +4,7 @@ import { getAuth } from "@clerk/express";
 import { getUserPreferences } from "../services/user.service";
 import { buildSystemPrompt } from "../services/chat.service";
 import prisma from "../config/db.config";
+import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -55,16 +56,21 @@ export async function handleTopicChat(req: Request, res: Response) {
   }
 
   try {
-    const [prefs, dbUser] = await Promise.all([
+    // Check chat limit before processing
+    await checkChatLimit(userId);
+
+    const [prefs, dbUser, aiModel] = await Promise.all([
       getUserPreferences(userId),
       prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } }),
+      getAiModel(userId),
     ]);
 
-    // Persist the user's message
+    // Persist the user's message and increment usage
     if (topicId && userMessage && dbUser) {
       await prisma.chatMessage.create({
         data: { userId: dbUser.id, topicId, role: "user", content: userMessage },
       });
+      await incrementChatUsage(userId);
     }
 
     const systemPrompt = buildSystemPrompt(prefs, courseTitle, topicName);
@@ -81,7 +87,7 @@ export async function handleTopicChat(req: Request, res: Response) {
 
     // ── Stream the text explanation ───────────────────────────────────────────
     const textStream = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: aiModel,
       max_tokens: 1024,
       stream: true,
       messages: [{ role: "system", content: systemPrompt }, ...messages],
@@ -112,7 +118,7 @@ export async function handleTopicChat(req: Request, res: Response) {
       let tcArgs = "";
 
       const toolStream = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: aiModel,
         max_tokens: 1024,
         stream: true,
         tools: VISUAL_TOOLS,

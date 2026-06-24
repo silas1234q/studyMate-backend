@@ -12,6 +12,7 @@ import {
   updateObjective,
   deleteObjective,
 } from "../services/objectives.service";
+import { checkQuizLimit, incrementQuizUsage } from "../services/subscription.service";
 
 export const handleGetObjectives = catchAsync(
   async (req: Request, res: Response) => {
@@ -121,6 +122,9 @@ export const handleGenerateQuiz = catchAsync(
   async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     if (!userId) throw new AuthError("user not authenticated");
+
+    await checkQuizLimit(userId);
+
     const courseId = req.params.courseId as string;
     const topicId = req.params.topicId as string;
     const { objectives, courseTitle, topicTitle } = req.body as {
@@ -138,6 +142,9 @@ export const handleGenerateQuiz = catchAsync(
       courseTitle,
       topicTitle,
     });
+
+    await incrementQuizUsage(userId);
+
     res.json(result);
   }
 );

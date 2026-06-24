@@ -25,6 +25,8 @@ model User {
   streak               UserStreak?
   dailyActivities      DailyActivity[]
   quickConversations   QuickConversation[]
+  subscription         Subscription?
+  usageTrackers        UsageTracker[]
 }
 
 model UserPreferences {
@@ -165,4 +167,33 @@ model QuickChatMessage {
   role           String
   content        String
   createdAt      DateTime          @default(now())
+}
+
+model Subscription {
+  id                       String    @id @default(uuid())
+  userId                   String    @unique
+  user                     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                     String    @default("free")
+  interval                 String?
+  currency                 String?
+  status                   String    @default("active")
+  paystackCustomerCode     String?   @unique
+  paystackSubscriptionCode String?   @unique
+  paystackEmailToken       String?
+  currentPeriodStart       DateTime?
+  currentPeriodEnd         DateTime?
+  cancelledAt              DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+}
+
+model UsageTracker {
+  id           String @id @default(uuid())
+  userId       String
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         String
+  chatMessages Int    @default(0)
+  quizzes      Int    @default(0)
+
+  @@unique([userId, date])
 }
