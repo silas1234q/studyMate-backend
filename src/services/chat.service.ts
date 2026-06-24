@@ -44,7 +44,7 @@ Math formatting:
 - Always write mathematical expressions in LaTeX using $...$ for inline math (e.g. $x^2 + 1$) and $$...$$ on its own line for display/block equations
 - Never use plain parentheses like \\( ... \\) or \\[ ... \\] — use only $ and $$ delimiters
 
-When an explanation benefits from a visual — or the student explicitly asks to see one — call the appropriate tool: show_diagram for structural/process concepts, show_illustration for real-world visual concepts.`;
+When an explanation benefits from a visual — or the student explicitly asks to see one — call the show_diagram tool to render a Mermaid.js diagram.`;
 }
 
 export function buildSystemPrompt(
@@ -78,5 +78,5 @@ Math formatting:
 - Always write mathematical expressions in LaTeX using $...$ for inline math (e.g. $x^2 + 1$) and $$...$$ on its own line for display/block equations
 - Never use plain parentheses like \\( ... \\) or \\[ ... \\] — use only $ and $$ delimiters
 
-When an explanation benefits from a visual — or the student explicitly asks to see one — call the appropriate tool: show_diagram for structural/process concepts, show_illustration for real-world visual concepts.`;
+When an explanation benefits from a visual — or the student explicitly asks to see one — call the show_diagram tool to render a Mermaid.js diagram.`;
 }

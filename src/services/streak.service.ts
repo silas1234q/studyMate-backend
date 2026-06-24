@@ -100,6 +100,19 @@ async function applyXp(
     },
   });
 
+  // Track daysAtTop: if user is #1 by XP on a new day, increment
+  if (isNewDay) {
+    const higherCount = await prisma.userStreak.count({
+      where: { totalXp: { gt: newTotalXp } },
+    });
+    if (higherCount === 0) {
+      await prisma.userStreak.update({
+        where: { userId },
+        data: { daysAtTop: { increment: 1 } },
+      });
+    }
+  }
+
   return { streakUpdated: isNewDay, newStreak, newTotalXp, newDailyXp, milestoneReached };
 }
 
@@ -216,6 +229,30 @@ export const awardTopicXp = async (userId: string) => {
     update: {},
     create: { userId, date: today },
   });
+};
+
+// ── Public: GET /streak/achievements ─────────────────────────────────────────
+
+export const getAchievements = async (clerkId: string) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const streak = await getOrCreateStreak(user.id);
+
+  const [topicsCompleted, coursesEnrolled] = await Promise.all([
+    prisma.topicCompletion.count({ where: { userId: user.id } }),
+    prisma.enrollment.count({ where: { userId: user.id } }),
+  ]);
+
+  return {
+    stats: {
+      longestStreak: streak.longestStreak,
+      totalXp: streak.totalXp,
+      topicsCompleted,
+      coursesEnrolled,
+      daysAtTop: streak.daysAtTop,
+    },
+  };
 };
 
 // ── Public: GET /streak/leaderboard ─────────────────────────────────────────

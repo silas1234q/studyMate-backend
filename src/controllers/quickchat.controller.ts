@@ -36,26 +36,6 @@ const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "show_illustration",
-      description:
-        "Show an AI-generated educational illustration. Use for biology, anatomy, chemistry, " +
-        "physics phenomena, historical scenes — anything benefiting from a real-world image.",
-      parameters: {
-        type: "object",
-        properties: {
-          prompt: {
-            type: "string",
-            description:
-              "Detailed image-generation prompt describing a clear, labelled educational diagram.",
-          },
-        },
-        required: ["prompt"],
-      },
-    },
-  },
 ];
 
 interface ChatMessage {
@@ -143,7 +123,7 @@ export async function handleQuickChat(req: Request, res: Response) {
     res.flushHeaders();
 
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const wantsVisual = /\b(show|draw|visuali[sz]e|diagram|illustrate|depict|sketch|display|render)\b/i.test(lastUserMsg);
+    const wantsVisual = /\b(show|draw|visuali[sz]e|diagram|depict|sketch|display|render)\b/i.test(lastUserMsg);
 
     let fullResponse = "";
 
@@ -171,7 +151,7 @@ export async function handleQuickChat(req: Request, res: Response) {
         {
           role: "user",
           content:
-            "Now call the appropriate tool (show_diagram or show_illustration) to produce the visual you just described.",
+            "Now call the show_diagram tool to produce the visual you just described.",
         },
       ];
 
@@ -204,8 +184,6 @@ export async function handleQuickChat(req: Request, res: Response) {
             let fence = "";
             if (tcName === "show_diagram" && args.code) {
               fence = `\n\`\`\`mermaid\n${args.code}\n\`\`\`\n`;
-            } else if (tcName === "show_illustration" && args.prompt) {
-              fence = `\n\`\`\`illustration\n${args.prompt}\n\`\`\`\n`;
             }
             if (fence) {
               fullResponse += fence;

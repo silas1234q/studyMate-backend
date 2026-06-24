@@ -7,6 +7,7 @@ import {
   getStreakData,
   recordActivity,
   getLeaderboard,
+  getAchievements,
 } from "../services/streak.service";
 
 export const handleGetStreak = catchAsync(
@@ -34,6 +35,15 @@ export const handleRecordActivity = catchAsync(
 
     const result = await recordActivity(userId, type, metadata);
     res.json(result);
+  }
+);
+
+export const handleGetAchievements = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) throw new AuthError("user not authenticated");
+    const data = await getAchievements(userId);
+    res.json(data);
   }
 );
 

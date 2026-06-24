@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import prisma from "../config/db.config";
-import cloudinary from "../config/cloudinary.config";
 import NotFoundError from "../errors/NotFoundError";
 import { awardTopicXp } from "./streak.service";
 
@@ -11,7 +10,6 @@ export interface GeneratedPreview {
   icon: string;
   color: string;
   topics: string[];
-  imageUrl?: string | null;
 }
 
 const FALLBACK_COLORS = [
@@ -22,34 +20,6 @@ const FALLBACK_COLORS = [
   "#3B82F6",
   "#8B5CF6",
 ];
-
-async function generateCourseImage(title: string): Promise<string | null> {
-  try {
-    const response = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt: `A stunning, hyper-detailed digital artwork representing the subject of '${title}'. Cinematic lighting, rich colors, sharp focus, photorealistic or concept-art style. No text, no letters, no UI elements.`,
-    });
-
-    if (!response.data || response.data.length === 0) return null;
-
-    const b64 = response.data[0].b64_json;
-    if (!b64) return null;
-
-    const tempUrl = `data:image/png;base64,${b64}`;
-
-    const result = await cloudinary.uploader.upload(tempUrl, {
-      folder: "studymate-courses",
-      resource_type: "image",
-    });
-
-    console.log("Cloudinary upload result:", result);
-
-    return result.secure_url;
-  } catch (err) {
-    console.error("generateCourseImage error:", err);
-    return null;
-  }
-}
 
 async function generateCourseStructure(
   title: string,
@@ -83,7 +53,6 @@ async function generateCourseStructure(
       Array.isArray(parsed.topics) && parsed.topics.length > 0
         ? parsed.topics
         : ["Introduction", "Core Concepts", "Practice & Review"],
-    imageUrl: null,
   };
 }
 
@@ -110,7 +79,6 @@ export const createCourse = async (
         description: generated.description,
         icon: generated.icon,
         color: generated.color,
-        imageUrl: generated.imageUrl ?? null,
         topics: {
           create: generated.topics.map((t, i) => ({ title: t, order: i })),
         },
@@ -131,7 +99,6 @@ export const createCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
-    imageUrl: course.imageUrl ?? null,
     topics: course.topics.map((t) => ({
       id: t.id,
       title: t.title,
@@ -142,15 +109,6 @@ export const createCourse = async (
     topicsCompleted: 0,
     progressPercent: 0,
   };
-
-  // Fire-and-forget: generate course image in background
-  const courseId = course.id;
-  generateCourseImage(title).then(async (url) => {
-    if (url) {
-      await prisma.course.update({ where: { id: courseId }, data: { imageUrl: url } });
-      console.log("Background image gen completed for course:", courseId);
-    }
-  }).catch((err) => console.error("Background image gen failed:", err));
 
   return result;
 };
@@ -189,7 +147,6 @@ export const getUserCourses = async (clerkId: string) => {
       description: course.description,
       color: course.color,
       icon: course.icon,
-      imageUrl: course.imageUrl ?? null,
       topicTitles: course.topics.map((t) => t.title),
       totalTopics: total,
       topicsCompleted: completed,
@@ -234,7 +191,6 @@ export const getCourseById = async (clerkId: string, courseId: string) => {
     description: course.description,
     color: course.color,
     icon: course.icon,
-    imageUrl: course.imageUrl ?? null,
     topics,
     totalTopics: total,
     topicsCompleted,
@@ -281,7 +237,6 @@ export const updateCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
-    imageUrl: course.imageUrl ?? null,
     topics,
     totalTopics: total,
     topicsCompleted,

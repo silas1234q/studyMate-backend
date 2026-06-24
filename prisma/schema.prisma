@@ -133,6 +133,7 @@ model UserStreak {
   dailyXp          Int      @default(0)
   dailyXpGoal      Int      @default(200)
   lastActivityDate String?
+  daysAtTop        Int      @default(0)
   milestoneReached Int?
   updatedAt        DateTime @updatedAt
 }
