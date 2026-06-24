@@ -7,6 +7,7 @@ import ValidationError from "../errors/ValidationError";
 import prisma from "../config/db.config";
 import { getSubscriptionStatus } from "../services/subscription.service";
 import {
+  fetchPlan,
   initializeTransaction,
   verifyTransaction,
   cancelSubscription as paystackCancel,
@@ -61,9 +62,12 @@ export const handleInitiateUpgrade = catchAsync(
     });
     if (!user) throw new AuthError("user not found");
 
+    const plan = await fetchPlan(planCode);
+
     const result = await initializeTransaction(
       user.email,
       planCode,
+      plan.amount,
       callbackUrl,
       { userId: user.id, clerkId: userId, interval, region },
     );
