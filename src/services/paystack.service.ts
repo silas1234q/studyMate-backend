@@ -22,20 +22,23 @@ async function paystackFetch(path: string, options: RequestInit = {}) {
 
 export async function initializeTransaction(
   email: string,
-  planCode: string,
+  planCode: string | null,
   amountInPesewas: number,
   callbackUrl: string,
   metadata: Record<string, string>,
 ) {
+  const body: Record<string, unknown> = {
+    email,
+    amount: amountInPesewas,
+    callback_url: callbackUrl,
+    metadata,
+  };
+  if (planCode) {
+    body.plan = planCode;
+  }
   const data = await paystackFetch("/transaction/initialize", {
     method: "POST",
-    body: JSON.stringify({
-      email,
-      amount: amountInPesewas,
-      plan: planCode,
-      callback_url: callbackUrl,
-      metadata,
-    }),
+    body: JSON.stringify(body),
   });
   return data.data as { authorization_url: string; access_code: string; reference: string };
 }

@@ -14,13 +14,13 @@ import {
 } from "../services/paystack.service";
 
 // Amounts in pesewas (Paystack API uses subunits). All plans are in GHS.
-// GHS plans: GHS 15/mo, GHS 50/yr
-// INT plans: GHS 30/mo, GHS 100/yr (equivalent of ~$3/mo, ~$10/yr)
+// GHS plans: GHS 15/mo, GHS 100/yr
+// INT plans: GHS 30/mo, GHS 240/yr (equivalent of ~$3/mo, ~$15/yr)
 const PLANS: Record<string, { code: string | undefined; amount: number }> = {
   "monthly_GHS": { code: process.env.PAYSTACK_PRO_MONTHLY_GHS_PLAN_CODE, amount: 1500 },
-  "yearly_GHS":  { code: process.env.PAYSTACK_PRO_YEARLY_GHS_PLAN_CODE,  amount: 5000 },
+  "yearly_GHS":  { code: process.env.PAYSTACK_PRO_YEARLY_GHS_PLAN_CODE,  amount: 10000 },
   "monthly_INT": { code: process.env.PAYSTACK_PRO_MONTHLY_INT_PLAN_CODE, amount: 3000 },
-  "yearly_INT":  { code: process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,  amount: 10000 },
+  "yearly_INT":  { code: process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,  amount: 24000 },
 };
 
 export const handleGetSubscription = catchAsync(
@@ -55,7 +55,14 @@ export const handleInitiateUpgrade = catchAsync(
 
     const lookupKey = `${interval}_${region}`;
     const plan = PLANS[lookupKey];
-    if (!plan?.code) {
+    if (!plan) {
+      throw new ValidationError("Plan not configured for this interval/region combination");
+    }
+
+    // GHS users use one-time payments (no plan code → enables MoMo)
+    // INT users use card-based subscriptions (plan code required)
+    const planCode = region === "GHS" ? null : plan.code ?? null;
+    if (region === "INT" && !planCode) {
       throw new ValidationError("Plan not configured for this interval/region combination");
     }
 
@@ -67,7 +74,7 @@ export const handleInitiateUpgrade = catchAsync(
 
     const result = await initializeTransaction(
       user.email,
-      plan.code,
+      planCode,
       plan.amount,
       callbackUrl,
       { userId: user.id, clerkId: userId, interval, region },
@@ -98,54 +105,111 @@ export const handleVerifyPayment = catchAsync(
     });
     if (!user) throw new AuthError("user not found");
 
-    // Find the subscription Paystack created for this customer
     const customerCode = txData.customer.customer_code;
-    let subscriptionCode: string | null = null;
-    let emailToken: string | null = null;
-    let nextPaymentDate: string | null = null;
-
-    try {
-      const subs = await listCustomerSubscriptions(customerCode);
-      const activeSub = subs.find((s) => s.status === "active");
-      if (activeSub) {
-        subscriptionCode = activeSub.subscription_code;
-        emailToken = activeSub.email_token;
-        nextPaymentDate = activeSub.next_payment_date;
-      }
-    } catch {
-      // Non-critical — we can update via webhook later
-    }
-
     const interval = txData.metadata?.interval ?? txData.plan_object?.interval ?? null;
     const currency = txData.metadata?.region ?? txData.metadata?.currency ?? null;
 
-    await prisma.subscription.upsert({
-      where: { userId: user.id },
-      create: {
-        userId: user.id,
-        plan: "pro",
-        status: "active",
-        interval,
-        currency,
-        paystackCustomerCode: customerCode,
-        paystackSubscriptionCode: subscriptionCode,
-        paystackEmailToken: emailToken,
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: nextPaymentDate ? new Date(nextPaymentDate) : null,
-      },
-      update: {
-        plan: "pro",
-        status: "active",
-        interval,
-        currency,
-        paystackCustomerCode: customerCode,
-        paystackSubscriptionCode: subscriptionCode,
-        paystackEmailToken: emailToken,
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: nextPaymentDate ? new Date(nextPaymentDate) : null,
-        cancelledAt: null,
-      },
-    });
+    if (currency === "GHS") {
+      // GHS one-time payment: calculate period end manually, no Paystack subscription
+      const now = new Date();
+      let periodEnd: Date;
+      if (interval === "yearly") {
+        periodEnd = new Date(now);
+        periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+      } else {
+        periodEnd = new Date(now);
+        periodEnd.setDate(periodEnd.getDate() + 30);
+      }
+
+      // If user already has an active sub with future end date, extend from that date
+      const existingSub = await prisma.subscription.findUnique({ where: { userId: user.id } });
+      if (
+        existingSub &&
+        existingSub.status === "active" &&
+        existingSub.currentPeriodEnd &&
+        existingSub.currentPeriodEnd > now
+      ) {
+        const base = existingSub.currentPeriodEnd;
+        if (interval === "yearly") {
+          periodEnd = new Date(base);
+          periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+        } else {
+          periodEnd = new Date(base);
+          periodEnd.setDate(periodEnd.getDate() + 30);
+        }
+      }
+
+      await prisma.subscription.upsert({
+        where: { userId: user.id },
+        create: {
+          userId: user.id,
+          plan: "pro",
+          status: "active",
+          interval,
+          currency,
+          paystackCustomerCode: customerCode,
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+        },
+        update: {
+          plan: "pro",
+          status: "active",
+          interval,
+          currency,
+          paystackCustomerCode: customerCode,
+          paystackSubscriptionCode: null,
+          paystackEmailToken: null,
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+          cancelledAt: null,
+        },
+      });
+    } else {
+      // INT card-based subscription: find Paystack subscription as before
+      let subscriptionCode: string | null = null;
+      let emailToken: string | null = null;
+      let nextPaymentDate: string | null = null;
+
+      try {
+        const subs = await listCustomerSubscriptions(customerCode);
+        const activeSub = subs.find((s) => s.status === "active");
+        if (activeSub) {
+          subscriptionCode = activeSub.subscription_code;
+          emailToken = activeSub.email_token;
+          nextPaymentDate = activeSub.next_payment_date;
+        }
+      } catch {
+        // Non-critical — we can update via webhook later
+      }
+
+      await prisma.subscription.upsert({
+        where: { userId: user.id },
+        create: {
+          userId: user.id,
+          plan: "pro",
+          status: "active",
+          interval,
+          currency,
+          paystackCustomerCode: customerCode,
+          paystackSubscriptionCode: subscriptionCode,
+          paystackEmailToken: emailToken,
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: nextPaymentDate ? new Date(nextPaymentDate) : null,
+        },
+        update: {
+          plan: "pro",
+          status: "active",
+          interval,
+          currency,
+          paystackCustomerCode: customerCode,
+          paystackSubscriptionCode: subscriptionCode,
+          paystackEmailToken: emailToken,
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: nextPaymentDate ? new Date(nextPaymentDate) : null,
+          cancelledAt: null,
+        },
+      });
+    }
 
     res.json({ success: true, plan: "pro" });
   }
@@ -166,6 +230,28 @@ export const handleCancelSubscription = catchAsync(
     if (!sub || sub.plan !== "pro") {
       throw new ValidationError("No active Pro subscription to cancel");
     }
+
+    // GHS one-time payment users: cancel locally without calling Paystack API
+    const isGhsOneTime = !sub.paystackSubscriptionCode && sub.currency === "GHS";
+
+    if (isGhsOneTime) {
+      await prisma.subscription.update({
+        where: { userId: user.id },
+        data: {
+          cancelledAt: new Date(),
+          status: "cancelled",
+        },
+      });
+
+      res.json({
+        success: true,
+        message: "Subscription cancelled. You'll retain Pro access until the end of your billing period.",
+        activeUntil: sub.currentPeriodEnd,
+      });
+      return;
+    }
+
+    // INT users: cancel via Paystack API
     if (!sub.paystackSubscriptionCode || !sub.paystackEmailToken) {
       throw new ValidationError("This subscription cannot be cancelled (lifetime Pro)");
     }

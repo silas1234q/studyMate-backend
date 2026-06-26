@@ -173,8 +173,9 @@ export async function getSubscriptionStatus(clerkId: string) {
   const usage = await getUsageToday(user.id);
   const courseCount = await prisma.enrollment.count({ where: { userId: user.id } });
 
-  // Determine if this is a trial (Pro without Paystack subscription)
-  const isTrial = sub.plan === "pro" && !sub.paystackSubscriptionCode && !!sub.currentPeriodEnd;
+  // Determine if this is a trial (Pro without Paystack subscription and not a GHS one-time payment)
+  const isGhsOneTime = sub.plan === "pro" && sub.currency === "GHS" && !sub.paystackSubscriptionCode && !!sub.paystackCustomerCode;
+  const isTrial = sub.plan === "pro" && !sub.paystackSubscriptionCode && !isGhsOneTime && !!sub.currentPeriodEnd;
 
   // Early adopter = trial period longer than 30 days (3 months vs 3 days)
   const isEarlyAdopter =
@@ -182,6 +183,16 @@ export async function getSubscriptionStatus(clerkId: string) {
     !!sub.currentPeriodStart &&
     !!sub.currentPeriodEnd &&
     sub.currentPeriodEnd.getTime() - sub.currentPeriodStart.getTime() > 30 * 24 * 60 * 60 * 1000;
+
+  // One-time payment: GHS Pro user without Paystack subscription (not a trial)
+  const isOneTimePayment = isGhsOneTime && !isTrial;
+
+  // Renewal due in days for active one-time payment users
+  let renewalDueInDays: number | null = null;
+  if (isOneTimePayment && sub.status === "active" && sub.currentPeriodEnd) {
+    const msLeft = sub.currentPeriodEnd.getTime() - Date.now();
+    renewalDueInDays = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+  }
 
   return {
     plan: sub.plan,
@@ -193,6 +204,8 @@ export async function getSubscriptionStatus(clerkId: string) {
     hasPaystackSubscription: !!sub.paystackSubscriptionCode,
     isTrial,
     isEarlyAdopter,
+    isOneTimePayment,
+    renewalDueInDays,
     limits: {
       maxCourses: limits.maxCourses === Infinity ? null : limits.maxCourses,
       chatMessagesPerDay: limits.chatMessagesPerDay === Infinity ? null : limits.chatMessagesPerDay,
