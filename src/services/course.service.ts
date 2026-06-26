@@ -130,20 +130,17 @@ export const getUserCourses = async (clerkId: string) => {
     orderBy: { createdAt: "desc" },
   });
 
-  const completionCounts = await Promise.all(
-    enrollments.map(({ course }) =>
-      prisma.topicCompletion.count({
-        where: {
-          userId: user.id,
-          topicId: { in: course.topics.map((t) => t.id) },
-        },
-      }),
-    ),
-  );
+  // Single query to get all completion counts instead of N+1
+  const allTopicIds = enrollments.flatMap(({ course }) => course.topics.map((t) => t.id));
+  const completions = await prisma.topicCompletion.findMany({
+    where: { userId: user.id, topicId: { in: allTopicIds } },
+    select: { topicId: true },
+  });
+  const completedTopicIds = new Set(completions.map((c) => c.topicId));
 
-  return enrollments.map(({ course }, i) => {
+  return enrollments.map(({ course }) => {
     const total = course.topics.length;
-    const completed = completionCounts[i];
+    const completed = course.topics.filter((t) => completedTopicIds.has(t.id)).length;
     return {
       id: course.id,
       title: course.title,
@@ -182,6 +179,7 @@ export const getCourseById = async (clerkId: string, courseId: string) => {
     id: t.id,
     title: t.title,
     order: t.order,
+    overview: t.overview,
     completed: completedIds.has(t.id),
   }));
 
@@ -259,6 +257,12 @@ export const deleteCourse = async (clerkId: string, courseId: string) => {
   await prisma.enrollment.delete({
     where: { userId_courseId: { userId: user.id, courseId } },
   });
+
+  // If no other users are enrolled, delete the orphaned course
+  const remaining = await prisma.enrollment.count({ where: { courseId } });
+  if (remaining === 0) {
+    await prisma.course.delete({ where: { id: courseId } });
+  }
 
   return { success: true };
 };
@@ -359,6 +363,31 @@ export const reorderTopics = async (
       `UPDATE "Topic" SET "order" = CASE ${cases} END WHERE "id" IN (${ids})`,
     ),
   ]);
+
+  return { success: true };
+};
+
+export const saveTopicOverview = async (
+  clerkId: string,
+  courseId: string,
+  topicId: string,
+  overview: string,
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId: user.id, courseId } },
+  });
+  if (!enrollment) throw new NotFoundError("course");
+
+  const topic = await prisma.topic.findFirst({ where: { id: topicId, courseId } });
+  if (!topic) throw new NotFoundError("topic");
+
+  await prisma.topic.update({
+    where: { id: topicId },
+    data: { overview },
+  });
 
   return { success: true };
 };

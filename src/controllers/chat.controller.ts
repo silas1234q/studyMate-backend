@@ -5,8 +5,13 @@ import { getUserPreferences } from "../services/user.service";
 import { buildSystemPrompt } from "../services/chat.service";
 import prisma from "../config/db.config";
 import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
+import { catchAsync } from "../utils/catchAsync";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const MAX_MESSAGE_LENGTH = 5000;
+const MAX_MESSAGES = 50;
+const ALLOWED_ROLES = new Set(["user", "assistant"]);
 
 const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
   {
@@ -35,6 +40,53 @@ interface ChatMessage {
   content: string;
 }
 
+function sanitizeMessages(raw: unknown[]): ChatMessage[] {
+  return raw
+    .filter(
+      (m): m is { role: string; content: string } =>
+        typeof m === "object" &&
+        m !== null &&
+        typeof (m as Record<string, unknown>).role === "string" &&
+        ALLOWED_ROLES.has((m as Record<string, unknown>).role as string) &&
+        typeof (m as Record<string, unknown>).content === "string"
+    )
+    .slice(-MAX_MESSAGES)
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content.slice(0, MAX_MESSAGE_LENGTH),
+    }));
+}
+
+/**
+ * Verify the user is enrolled in the course that owns this topic.
+ * Returns the internal DB user id, or null if not enrolled.
+ */
+async function verifyTopicAccess(clerkId: string, topicId: string) {
+  const dbUser = await prisma.user.findUnique({
+    where: { clerkId },
+    select: { id: true },
+  });
+  if (!dbUser) return null;
+
+  const topic = await prisma.topic.findUnique({
+    where: { id: topicId },
+    select: {
+      course: {
+        select: {
+          enrollments: {
+            where: { userId: dbUser.id },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  if (!topic || topic.course.enrollments.length === 0) return null;
+  return dbUser;
+}
+
 export async function handleTopicChat(req: Request, res: Response) {
   const { userId } = getAuth(req);
   if (!userId) {
@@ -42,26 +94,50 @@ export async function handleTopicChat(req: Request, res: Response) {
     return;
   }
 
-  const { courseTitle, topicName, messages, topicId, userMessage } = req.body as {
+  const { courseTitle, topicName, messages: rawMessages, topicId, userMessage } = req.body as {
     courseTitle: string;
     topicName: string;
-    messages: ChatMessage[];
+    messages: unknown[];
     topicId?: string;
     userMessage?: string;
   };
 
-  if (!courseTitle || !topicName || !Array.isArray(messages)) {
+  if (!courseTitle || !topicName || !Array.isArray(rawMessages)) {
     res.status(400).json({ message: "courseTitle, topicName, and messages are required" });
     return;
   }
+
+  if (typeof courseTitle !== "string" || courseTitle.length > 200) {
+    res.status(400).json({ message: "Invalid courseTitle" });
+    return;
+  }
+  if (typeof topicName !== "string" || topicName.length > 200) {
+    res.status(400).json({ message: "Invalid topicName" });
+    return;
+  }
+  if (userMessage && (typeof userMessage !== "string" || userMessage.length > MAX_MESSAGE_LENGTH)) {
+    res.status(400).json({ message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters` });
+    return;
+  }
+
+  const messages = sanitizeMessages(rawMessages);
 
   try {
     // Check chat limit before processing
     await checkChatLimit(userId);
 
-    const [prefs, dbUser, aiModel] = await Promise.all([
+    // If topicId provided, verify enrollment
+    let dbUser: { id: string } | null = null;
+    if (topicId) {
+      dbUser = await verifyTopicAccess(userId, topicId);
+      if (!dbUser) {
+        res.status(403).json({ message: "You do not have access to this topic" });
+        return;
+      }
+    }
+
+    const [prefs, aiModel] = await Promise.all([
       getUserPreferences(userId),
-      prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } }),
       getAiModel(userId),
     ]);
 
@@ -166,6 +242,7 @@ export async function handleTopicChat(req: Request, res: Response) {
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {
+    console.error("[chat] streaming error:", err);
     if (!res.headersSent) {
       res.status(500).json({ message: "Failed to stream response" });
     } else {
@@ -175,7 +252,7 @@ export async function handleTopicChat(req: Request, res: Response) {
   }
 }
 
-export async function getTopicChatHistory(req: Request, res: Response) {
+export const getTopicChatHistory = catchAsync(async (req: Request, res: Response) => {
   const { userId } = getAuth(req);
   if (!userId) {
     res.status(401).json({ message: "Unauthorized" });
@@ -188,17 +265,23 @@ export async function getTopicChatHistory(req: Request, res: Response) {
     return;
   }
 
-  const dbUser = await prisma.user.findUnique({ where: { clerkId: userId }, select: { id: true } });
+  // Verify the user is enrolled in the course that owns this topic
+  const dbUser = await verifyTopicAccess(userId, topicId);
   if (!dbUser) {
-    res.status(404).json({ message: "User not found" });
+    res.status(403).json({ message: "You do not have access to this topic" });
     return;
   }
+
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 100));
+  const cursor = req.query.cursor as string | undefined;
 
   const messages = await prisma.chatMessage.findMany({
     where: { userId: dbUser.id, topicId },
     orderBy: { createdAt: "asc" },
-    select: { role: true, content: true },
+    select: { id: true, role: true, content: true },
+    take: limit,
+    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
 
   res.json(messages);
-}
+});

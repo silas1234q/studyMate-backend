@@ -55,6 +55,22 @@ export const generateObjectives = async (
 ) => {
   const { user } = await verifyAccess(clerkId, courseId, topicId);
 
+  // If objectives already exist for this topic, return them instead of regenerating
+  const existing = await prisma.learningObjective.findMany({
+    where: { topicId },
+    orderBy: { order: "asc" },
+    include: { covered: { where: { userId: user.id } } },
+  });
+
+  if (existing.length > 0) {
+    return existing.map((obj) => ({
+      id: obj.id,
+      text: obj.text,
+      order: obj.order,
+      covered: obj.covered.length > 0,
+    }));
+  }
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },

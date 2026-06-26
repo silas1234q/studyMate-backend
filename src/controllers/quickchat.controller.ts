@@ -14,8 +14,13 @@ import {
 } from "../services/quickchat.service";
 import prisma from "../config/db.config";
 import { checkFeatureAccess, getAiModel } from "../services/subscription.service";
+import { catchAsync } from "../utils/catchAsync";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const MAX_MESSAGE_LENGTH = 5000;
+const MAX_MESSAGES = 50;
+const ALLOWED_ROLES = new Set(["user", "assistant"]);
 
 const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
   {
@@ -44,41 +49,58 @@ interface ChatMessage {
   content: string;
 }
 
-export async function handleCreateConversation(req: Request, res: Response) {
+function sanitizeMessages(raw: unknown[]): ChatMessage[] {
+  return raw
+    .filter(
+      (m): m is { role: string; content: string } =>
+        typeof m === "object" &&
+        m !== null &&
+        typeof (m as Record<string, unknown>).role === "string" &&
+        ALLOWED_ROLES.has((m as Record<string, unknown>).role as string) &&
+        typeof (m as Record<string, unknown>).content === "string"
+    )
+    .slice(-MAX_MESSAGES)
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content.slice(0, MAX_MESSAGE_LENGTH),
+    }));
+}
+
+export const handleCreateConversation = catchAsync(async (req: Request, res: Response) => {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
   await checkFeatureAccess(userId, "quickChat");
   const convo = await createConversation(userId);
   res.status(201).json(convo);
-}
+});
 
-export async function handleListConversations(req: Request, res: Response) {
+export const handleListConversations = catchAsync(async (req: Request, res: Response) => {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
   await checkFeatureAccess(userId, "quickChat");
   const conversations = await listConversations(userId);
   res.json(conversations);
-}
+});
 
-export async function handleGetConversation(req: Request, res: Response) {
+export const handleGetConversation = catchAsync(async (req: Request, res: Response) => {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
   const id = req.params.id as string;
   const messages = await getConversationMessages(userId, id);
   res.json(messages);
-}
+});
 
-export async function handleDeleteConversation(req: Request, res: Response) {
+export const handleDeleteConversation = catchAsync(async (req: Request, res: Response) => {
   const { userId } = getAuth(req);
   if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
 
   const id = req.params.id as string;
   await deleteConversation(userId, id);
   res.json({ success: true });
-}
+});
 
 export async function handleQuickChat(req: Request, res: Response) {
   const { userId } = getAuth(req);
@@ -86,16 +108,23 @@ export async function handleQuickChat(req: Request, res: Response) {
 
   await checkFeatureAccess(userId, "quickChat");
 
-  const { conversationId, messages, userMessage } = req.body as {
+  const { conversationId, messages: rawMessages, userMessage } = req.body as {
     conversationId: string;
-    messages: ChatMessage[];
+    messages: unknown[];
     userMessage: string;
   };
 
-  if (!conversationId || !Array.isArray(messages) || !userMessage) {
+  if (!conversationId || !Array.isArray(rawMessages) || !userMessage) {
     res.status(400).json({ message: "conversationId, messages, and userMessage are required" });
     return;
   }
+
+  if (typeof userMessage !== "string" || userMessage.length > MAX_MESSAGE_LENGTH) {
+    res.status(400).json({ message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters` });
+    return;
+  }
+
+  const messages = sanitizeMessages(rawMessages);
 
   try {
     const dbUser = await getDbUser(userId);
@@ -210,6 +239,7 @@ export async function handleQuickChat(req: Request, res: Response) {
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {
+    console.error("[quickchat] streaming error:", err);
     if (!res.headersSent) {
       res.status(500).json({ message: "Failed to stream response" });
     } else {

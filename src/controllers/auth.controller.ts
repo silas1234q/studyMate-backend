@@ -6,7 +6,6 @@ import AppError from "../errors/AppError";
 
 export const registerUserOrLogin = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
-  console.log("Authenticated user ID:", userId);
   if (!userId) throw new AuthError("user not authenticated");
 
   const result = await authService(userId);

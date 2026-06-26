@@ -18,12 +18,13 @@ export async function createConversation(clerkId: string) {
   });
 }
 
-export async function listConversations(clerkId: string) {
+export async function listConversations(clerkId: string, limit = 50) {
   const user = await getDbUser(clerkId);
   return prisma.quickConversation.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
     select: { id: true, title: true, updatedAt: true },
+    take: limit,
   });
 }
 

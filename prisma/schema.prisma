@@ -61,6 +61,7 @@ model Topic {
   course       Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
   title        String
   order        Int
+  overview     String?
   createdAt    DateTime            @default(now())
   completions  TopicCompletion[]
   chatMessages ChatMessage[]
@@ -78,6 +79,7 @@ model Enrollment {
   createdAt DateTime @default(now())
 
   @@unique([userId, courseId])
+  @@index([userId])
 }
 
 model TopicCompletion {
@@ -100,6 +102,8 @@ model ChatMessage {
   role      String
   content   String
   createdAt DateTime @default(now())
+
+  @@index([userId, topicId])
 }
 
 model LearningObjective {
@@ -138,6 +142,8 @@ model UserStreak {
   daysAtTop        Int      @default(0)
   milestoneReached Int?
   updatedAt        DateTime @updatedAt
+
+  @@index([totalXp(sort: Desc)])
 }
 
 model DailyActivity {
@@ -148,6 +154,7 @@ model DailyActivity {
   chatMessageAwarded Boolean @default(false)
 
   @@unique([userId, date])
+  @@index([userId])
 }
 
 model QuickConversation {
@@ -158,6 +165,8 @@ model QuickConversation {
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
   messages  QuickChatMessage[]
+
+  @@index([userId])
 }
 
 model QuickChatMessage {
@@ -167,6 +176,8 @@ model QuickChatMessage {
   role           String
   content        String
   createdAt      DateTime          @default(now())
+
+  @@index([conversationId])
 }
 
 model Subscription {

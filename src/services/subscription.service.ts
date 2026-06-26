@@ -4,8 +4,8 @@ import SubscriptionError from "../errors/SubscriptionError";
 
 export const PLAN_LIMITS = {
   free: {
-    maxCourses: 2,
-    chatMessagesPerDay: 15,
+    maxCourses: 1,
+    chatMessagesPerDay: 5,
     quizzesPerDay: 1,
     quickChat: false,
     illustrations: false,
@@ -30,7 +30,7 @@ async function getDbUser(clerkId: string) {
 }
 
 // First N users get 3 months of Pro for free
-const EARLY_ADOPTER_LIMIT = 20;
+const EARLY_ADOPTER_LIMIT = 10;
 // All new users get a 3-day Pro trial
 const TRIAL_DAYS = 3;
 
@@ -176,6 +176,13 @@ export async function getSubscriptionStatus(clerkId: string) {
   // Determine if this is a trial (Pro without Paystack subscription)
   const isTrial = sub.plan === "pro" && !sub.paystackSubscriptionCode && !!sub.currentPeriodEnd;
 
+  // Early adopter = trial period longer than 30 days (3 months vs 3 days)
+  const isEarlyAdopter =
+    isTrial &&
+    !!sub.currentPeriodStart &&
+    !!sub.currentPeriodEnd &&
+    sub.currentPeriodEnd.getTime() - sub.currentPeriodStart.getTime() > 30 * 24 * 60 * 60 * 1000;
+
   return {
     plan: sub.plan,
     status: sub.status,
@@ -185,6 +192,7 @@ export async function getSubscriptionStatus(clerkId: string) {
     cancelledAt: sub.cancelledAt,
     hasPaystackSubscription: !!sub.paystackSubscriptionCode,
     isTrial,
+    isEarlyAdopter,
     limits: {
       maxCourses: limits.maxCourses === Infinity ? null : limits.maxCourses,
       chatMessagesPerDay: limits.chatMessagesPerDay === Infinity ? null : limits.chatMessagesPerDay,

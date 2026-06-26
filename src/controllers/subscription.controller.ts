@@ -200,7 +200,10 @@ export const handleWebhook = async (req: Request, res: Response) => {
 
   const hash = crypto.createHmac("sha512", secret).update(rawBody).digest("hex");
 
-  if (hash !== signature) {
+  if (
+    !signature ||
+    !crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(signature, "hex"))
+  ) {
     res.status(401).json({ message: "Invalid signature" });
     return;
   }

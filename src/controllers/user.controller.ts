@@ -44,10 +44,16 @@ export const onboardUser = catchAsync(async (req, res) => {
 
   if (typeof learningGoal !== "string") {
     error['learningGoal'] = "learningGoal must be a string";
+  } else if (learningGoal.length > 500) {
+    error['learningGoal'] = "learningGoal must be at most 500 characters";
   }
 
   if (!Array.isArray(interests)) {
     error['interests'] = "interests must be an array";
+  } else if (interests.length > 20) {
+    error['interests'] = "interests must have at most 20 items";
+  } else if (interests.some((i: unknown) => typeof i !== "string" || (i as string).length > 50)) {
+    error['interests'] = "each interest must be a string of at most 50 characters";
   }
 
   if (Object.keys(error).length > 0) {

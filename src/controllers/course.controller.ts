@@ -15,6 +15,7 @@ import {
   updateTopic,
   deleteTopic,
   reorderTopics,
+  saveTopicOverview,
   type GeneratedPreview,
 } from "../services/course.service";
 
@@ -44,6 +45,9 @@ export const handleGenerateTopics = catchAsync(
     if (!title || typeof title !== "string" || !title.trim()) {
       throw new ValidationError("title is required");
     }
+    if (title.length > 200) {
+      throw new ValidationError("title must be at most 200 characters");
+    }
     const preview = await generateTopicsPreview(title.trim());
     res.json(preview);
   }
@@ -62,6 +66,9 @@ export const handleCreateCourse = catchAsync(
     };
     if (!title || typeof title !== "string" || !title.trim()) {
       throw new ValidationError("title is required");
+    }
+    if (title.length > 200) {
+      throw new ValidationError("title must be at most 200 characters");
     }
     const preview: GeneratedPreview | undefined =
       description && icon && color && Array.isArray(topics) && topics.length > 0
@@ -136,6 +143,27 @@ export const handleDeleteTopic = catchAsync(
     const { userId } = getAuth(req);
     if (!userId) throw new AuthError("user not authenticated");
     const result = await deleteTopic(userId, req.params.id as string, req.params.topicId as string);
+    res.json(result);
+  }
+);
+
+export const handleSaveTopicOverview = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) throw new AuthError("user not authenticated");
+    const { overview } = req.body as { overview?: string };
+    if (!overview || typeof overview !== "string") {
+      throw new ValidationError("overview is required");
+    }
+    if (overview.length > 50000) {
+      throw new ValidationError("overview is too long");
+    }
+    const result = await saveTopicOverview(
+      userId,
+      req.params.id as string,
+      req.params.topicId as string,
+      overview,
+    );
     res.json(result);
   }
 );
