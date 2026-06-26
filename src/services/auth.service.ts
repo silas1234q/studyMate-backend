@@ -30,5 +30,18 @@ export const authService = async (clerkId: string) => {
     ? await prisma.user.update({ where: { id: existing.id }, data: userData })
     : await prisma.user.create({ data: userData });
 
+  // Auto-detect onboarded users: if they have preferences in DB but Clerk
+  // metadata is missing (e.g. after switching Clerk to production), set it.
+  const hasPreferences = await prisma.userPreferences.findUnique({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+
+  if (hasPreferences && !clerkUser.publicMetadata?.onboarded) {
+    await clerkClient.users.updateUserMetadata(clerkId, {
+      publicMetadata: { onboarded: true },
+    });
+  }
+
   return user;
 };
