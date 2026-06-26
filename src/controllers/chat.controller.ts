@@ -5,6 +5,7 @@ import { getUserPreferences } from "../services/user.service";
 import { buildSystemPrompt } from "../services/chat.service";
 import prisma from "../config/db.config";
 import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
+import AppError from "../errors/AppError";
 import { catchAsync } from "../utils/catchAsync";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -244,7 +245,11 @@ export async function handleTopicChat(req: Request, res: Response) {
   } catch (err) {
     console.error("[chat] streaming error:", err);
     if (!res.headersSent) {
-      res.status(500).json({ message: "Failed to stream response" });
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ success: false, type: err.type, message: err.message });
+      } else {
+        res.status(500).json({ message: "Failed to stream response" });
+      }
     } else {
       res.write("data: [DONE]\n\n");
       res.end();

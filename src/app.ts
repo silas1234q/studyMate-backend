@@ -10,6 +10,9 @@ import { handleWebhook } from "./controllers/subscription.controller";
 
 const app = express();
 
+// Trust the first proxy (Render) so express-rate-limit sees real client IPs
+app.set("trust proxy", 1);
+
 // Security headers
 app.use(helmet());
 
@@ -24,10 +27,10 @@ if (process.env.NODE_ENV !== "production") {
   app.use(morgan("dev"));
 }
 
-// Global rate limit: 300 requests per 15 minutes per IP
+// Global rate limit: 1000 requests per 15 minutes per IP
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Too many requests, please try again later." },
