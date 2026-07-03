@@ -3,6 +3,11 @@ import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
 import { awardTopicXp } from "./streak.service";
 import { checkCourseLimit } from "./subscription.service";
+import {
+  createNotification,
+  checkAndCreateAchievementNotifications,
+} from "./notification.service";
+import { NotificationType } from "../types/notification.types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -95,6 +100,8 @@ export const createCourse = async (
 
     return newCourse;
   });
+
+  checkAndCreateAchievementNotifications(user.id).catch(() => {});
 
   const result = {
     id: course.id,
@@ -417,6 +424,35 @@ export const completeTopic = async (
   if (!existing) {
     await prisma.topicCompletion.create({ data: { userId: user.id, topicId } });
     await awardTopicXp(user.id);
+
+    // Fire-and-forget: topic completed notification
+    const course = await prisma.course.findUnique({ where: { id: courseId }, select: { title: true, topics: { select: { id: true } } } });
+    if (course) {
+      createNotification(
+        user.id,
+        NotificationType.TOPIC_COMPLETED,
+        "Topic Completed",
+        `You completed "${topic.title}" in ${course.title}`,
+        { courseId, topicId, topicTitle: topic.title, courseTitle: course.title },
+      ).catch(() => {});
+
+      // Check if all topics in course are completed
+      const allTopicIds = course.topics.map((t) => t.id);
+      const completedCount = await prisma.topicCompletion.count({
+        where: { userId: user.id, topicId: { in: allTopicIds } },
+      });
+      if (completedCount === allTopicIds.length) {
+        createNotification(
+          user.id,
+          NotificationType.COURSE_COMPLETED,
+          "Course Completed",
+          `You completed all topics in ${course.title}!`,
+          { courseId, courseTitle: course.title },
+        ).catch(() => {});
+      }
+    }
+
+    checkAndCreateAchievementNotifications(user.id).catch(() => {});
   }
 
   return { success: true };

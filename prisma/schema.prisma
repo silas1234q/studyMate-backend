@@ -27,6 +27,8 @@ model User {
   quickConversations   QuickConversation[]
   subscription         Subscription?
   usageTrackers        UsageTracker[]
+  notifications        Notification[]
+  studySchedules       StudySchedule[]
 }
 
 model UserPreferences {
@@ -38,6 +40,7 @@ model UserPreferences {
   learningGoal         String
   explanationDepth     Int
   interests            String[]
+  timezone             String   @default("UTC")
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -77,6 +80,8 @@ model Enrollment {
   courseId  String
   course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  studySchedule StudySchedule?
 
   @@unique([userId, courseId])
   @@index([userId])
@@ -207,4 +212,35 @@ model UsageTracker {
   quizzes      Int    @default(0)
 
   @@unique([userId, date])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  data      Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model StudySchedule {
+  id           String     @id @default(uuid())
+  enrollmentId String     @unique
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  daysOfWeek   Int[]
+  time         String
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([isActive])
+  @@index([userId])
 }

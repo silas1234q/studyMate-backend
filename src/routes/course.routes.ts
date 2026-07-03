@@ -14,6 +14,7 @@ import {
   handleDeleteTopic,
   handleReorderTopics,
   handleSaveTopicOverview,
+  handleQuizResult,
 } from "../controllers/course.controller";
 import {
   handleGetObjectives,
@@ -61,5 +62,6 @@ router.delete("/:courseId/topics/:topicId/objectives/:objectiveId", requireClerk
 
 // Quiz
 router.post("/:courseId/topics/:topicId/quiz/generate", requireClerkAuth, aiLimiter, handleGenerateQuiz);
+router.post("/:courseId/topics/:topicId/quiz/result", requireClerkAuth, handleQuizResult);
 
 export default router;
