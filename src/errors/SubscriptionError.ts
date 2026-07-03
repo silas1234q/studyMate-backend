@@ -5,7 +5,7 @@ class SubscriptionError extends AppError {
     super({
       message,
       statusCode: 403,
-      type: "SUBSCRIPTION_LIMIT",
+      type: "SUBSCRIPTION_ERROR",
     });
   }
 }
