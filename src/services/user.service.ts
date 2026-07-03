@@ -18,6 +18,7 @@ interface OnboardingInput {
   learningGoal: string;
   explanationDepth: number;
   interests: string[];
+  timezone?: string;
 }
 
 export const saveOnboarding = async (clerkId: string, data: OnboardingInput) => {
@@ -35,4 +36,20 @@ export const saveOnboarding = async (clerkId: string, data: OnboardingInput) => 
   });
 
   return preferences;
+};
+
+export const updatePreferences = async (
+  clerkId: string,
+  data: { timezone?: string },
+) => {
+  const user = await prisma.user.findUnique({ where: { clerkId } });
+  if (!user) throw new NotFoundError("user");
+
+  const prefs = await prisma.userPreferences.findUnique({ where: { userId: user.id } });
+  if (!prefs) throw new NotFoundError("user preferences");
+
+  return prisma.userPreferences.update({
+    where: { userId: user.id },
+    data,
+  });
 };

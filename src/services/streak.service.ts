@@ -1,5 +1,10 @@
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
+import {
+  createNotification,
+  checkAndCreateAchievementNotifications,
+} from "./notification.service";
+import { NotificationType } from "../types/notification.types";
 
 const DAILY_XP_GOAL = 200;
 const CHAT_XP = 20;
@@ -17,7 +22,7 @@ function daysBetween(earlier: string, later: string): number {
   return Math.round(
     (new Date(later + "T00:00:00Z").getTime() -
       new Date(earlier + "T00:00:00Z").getTime()) /
-      msPerDay
+      msPerDay,
   );
 }
 
@@ -48,7 +53,7 @@ async function getOrCreateStreak(userId: string) {
 
 async function applyXp(
   userId: string,
-  xpAwarded: number
+  xpAwarded: number,
 ): Promise<{
   streakUpdated: boolean;
   newStreak: number;
@@ -113,7 +118,26 @@ async function applyXp(
     }
   }
 
-  return { streakUpdated: isNewDay, newStreak, newTotalXp, newDailyXp, milestoneReached };
+  // Fire-and-forget: streak milestone notification
+  if (milestoneReached !== null) {
+    createNotification(
+      userId,
+      NotificationType.STREAK_MILESTONE,
+      `${milestoneReached}-Day Streak!`,
+      `You've maintained a ${milestoneReached}-day learning streak!`,
+      { milestone: milestoneReached },
+    ).catch(() => {});
+  }
+
+  checkAndCreateAchievementNotifications(userId).catch(() => {});
+
+  return {
+    streakUpdated: isNewDay,
+    newStreak,
+    newTotalXp,
+    newDailyXp,
+    milestoneReached,
+  };
 }
 
 // ── Public: GET /streak ──────────────────────────────────────────────────────
@@ -128,13 +152,37 @@ export const getStreakData = async (clerkId: string) => {
   // Effective streak (0 if broken — more than 1 day since last activity)
   let effectiveCurrentStreak = streak.currentStreak;
   if (streak.lastActivityDate) {
-    if (daysBetween(streak.lastActivityDate, today) > 1) {
+    const gap = daysBetween(streak.lastActivityDate, today);
+    if (gap > 1) {
       effectiveCurrentStreak = 0;
+    } else if (gap === 1 && streak.currentStreak > 0) {
+      // Studied yesterday but not today — streak at risk
+      // Dedupe: only create if no STREAK_AT_RISK notification exists for today
+      const todayStart = new Date(today + "T00:00:00Z");
+      const tomorrowStart = new Date(todayStart);
+      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+      const existing = await prisma.notification.findFirst({
+        where: {
+          userId: user.id,
+          type: NotificationType.STREAK_AT_RISK,
+          createdAt: { gte: todayStart, lt: tomorrowStart },
+        },
+      });
+      if (!existing) {
+        createNotification(
+          user.id,
+          NotificationType.STREAK_AT_RISK,
+          "Streak at Risk!",
+          `Your ${streak.currentStreak}-day streak will reset if you don't study today!`,
+          { currentStreak: streak.currentStreak },
+        ).catch(() => {});
+      }
     }
   }
 
   // Effective daily XP resets if today hasn't had activity yet
-  const effectiveDailyXp = streak.lastActivityDate === today ? streak.dailyXp : 0;
+  const effectiveDailyXp =
+    streak.lastActivityDate === today ? streak.dailyXp : 0;
 
   // Week days (Mon=0 … Sun=6 for current Mon–Sun week)
   const weekDates = getWeekDates(today);
@@ -171,7 +219,7 @@ export const getStreakData = async (clerkId: string) => {
 export const recordActivity = async (
   clerkId: string,
   type: "chat_message" | "topic_complete",
-  _metadata?: { topicId?: string; courseId?: string }
+  _metadata?: { topicId?: string; courseId?: string },
 ) => {
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");

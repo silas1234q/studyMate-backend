@@ -18,6 +18,10 @@ import {
   saveTopicOverview,
   type GeneratedPreview,
 } from "../services/course.service";
+import { createNotification } from "../services/notification.service";
+import { NotificationType } from "../types/notification.types";
+import prisma from "../config/db.config";
+import NotFoundError from "../errors/NotFoundError";
 
 export const handleGetCourses = catchAsync(
   async (req: Request, res: Response) => {
@@ -178,5 +182,49 @@ export const handleReorderTopics = catchAsync(
     }
     const result = await reorderTopics(userId, req.params.id as string, topicIds);
     res.json(result);
+  }
+);
+
+export const handleQuizResult = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId: clerkId } = getAuth(req);
+    if (!clerkId) throw new AuthError("user not authenticated");
+
+    const courseId = req.params.courseId as string;
+    const topicId = req.params.topicId as string;
+    const { passed, score } = req.body as { passed?: boolean; score?: number };
+    if (typeof passed !== "boolean" || typeof score !== "number") {
+      throw new ValidationError("passed (boolean) and score (number) are required");
+    }
+
+    const user = await prisma.user.findUnique({ where: { clerkId } });
+    if (!user) throw new NotFoundError("user");
+
+    const topic = await prisma.topic.findFirst({ where: { id: topicId, courseId } });
+    if (!topic) throw new NotFoundError("topic");
+
+    const course = await prisma.course.findUnique({ where: { id: courseId }, select: { title: true } });
+    const courseTitle = course?.title ?? "Unknown Course";
+
+    if (passed) {
+      const result = await completeTopic(clerkId, courseId, topicId);
+      createNotification(
+        user.id,
+        NotificationType.QUIZ_PASSED,
+        "Quiz Passed!",
+        `You scored ${score}/5 on "${topic.title}" in ${courseTitle}`,
+        { courseId, topicId, score, topicTitle: topic.title, courseTitle },
+      ).catch(() => {});
+      res.json(result);
+    } else {
+      createNotification(
+        user.id,
+        NotificationType.QUIZ_FAILED,
+        "Quiz Not Passed",
+        `You scored ${score}/5 on "${topic.title}". Keep studying!`,
+        { courseId, topicId, score, topicTitle: topic.title, courseTitle },
+      ).catch(() => {});
+      res.json({ success: true, passed: false, score });
+    }
   }
 );

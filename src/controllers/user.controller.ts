@@ -2,7 +2,16 @@ import { catchAsync } from "../utils/catchAsync";
 import { getAuth } from "@clerk/express";
 import AuthError from "../errors/AuthError";
 import ValidationError from "../errors/ValidationError";
-import { saveOnboarding, getUserPreferences } from "../services/user.service";
+import { saveOnboarding, getUserPreferences, updatePreferences } from "../services/user.service";
+
+function isValidTimezone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const handleGetPreferences = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
@@ -15,7 +24,7 @@ export const onboardUser = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
   if (!userId) throw new AuthError("user not authenticated");
 
-  const { educationLevel, studySessionDuration, learningGoal, explanationDepth, interests } = req.body;
+  const { educationLevel, studySessionDuration, learningGoal, explanationDepth, interests, timezone } = req.body;
 
   const error: Record<string, string> = {}
 
@@ -56,10 +65,15 @@ export const onboardUser = catchAsync(async (req, res) => {
     error['interests'] = "each interest must be a string of at most 50 characters";
   }
 
+  if (timezone !== undefined) {
+    if (typeof timezone !== "string" || !isValidTimezone(timezone)) {
+      error['timezone'] = "timezone must be a valid IANA timezone";
+    }
+  }
+
   if (Object.keys(error).length > 0) {
     throw new ValidationError(`invalid onboarding data ${error}`);
   }
-
 
   const preferences = await saveOnboarding(userId, {
     educationLevel,
@@ -67,7 +81,26 @@ export const onboardUser = catchAsync(async (req, res) => {
     learningGoal,
     explanationDepth,
     interests,
+    ...(timezone && { timezone }),
   });
 
   return res.status(201).json(preferences);
+});
+
+export const handleUpdatePreferences = catchAsync(async (req, res) => {
+  const { userId } = getAuth(req);
+  if (!userId) throw new AuthError("user not authenticated");
+
+  const { timezone } = req.body;
+  const data: { timezone?: string } = {};
+
+  if (timezone !== undefined) {
+    if (typeof timezone !== "string" || !isValidTimezone(timezone)) {
+      throw new ValidationError("timezone must be a valid IANA timezone");
+    }
+    data.timezone = timezone;
+  }
+
+  const preferences = await updatePreferences(userId, data);
+  res.json(preferences);
 });

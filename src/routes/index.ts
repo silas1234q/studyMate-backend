@@ -6,6 +6,8 @@ import courseRoutes from "./course.routes";
 import streakRoutes from "./streak.routes";
 import quickChatRoutes from "./quickchat.routes";
 import subscriptionRoutes from "./subscription.routes";
+import notificationRoutes from "./notification.routes";
+import scheduleRoutes from "./schedule.routes";
 
 const router = Router();
 
@@ -20,5 +22,7 @@ router.use("/courses", courseRoutes);
 router.use("/streak", streakRoutes);
 router.use("/quick-chat", quickChatRoutes);
 router.use("/subscription", subscriptionRoutes);
+router.use("/notifications", notificationRoutes);
+router.use("/schedules", scheduleRoutes);
 
 export default router;
