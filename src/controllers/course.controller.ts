@@ -61,12 +61,14 @@ export const handleCreateCourse = catchAsync(
   async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     if (!userId) throw new AuthError("user not authenticated");
-    const { title, description, icon, color, topics } = req.body as {
+    const { title, description, icon, color, topics, category, imageUrl } = req.body as {
       title?: string;
       description?: string;
       icon?: string;
       color?: string;
       topics?: string[];
+      category?: string;
+      imageUrl?: string | null;
     };
     if (!title || typeof title !== "string" || !title.trim()) {
       throw new ValidationError("title is required");
@@ -76,7 +78,7 @@ export const handleCreateCourse = catchAsync(
     }
     const preview: GeneratedPreview | undefined =
       description && icon && color && Array.isArray(topics) && topics.length > 0
-        ? { description, icon, color, topics }
+        ? { description, icon, color, topics, category, imageUrl }
         : undefined;
     const course = await createCourse(userId, title.trim(), preview);
     res.status(201).json(course);

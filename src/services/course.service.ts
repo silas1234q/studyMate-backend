@@ -8,6 +8,7 @@ import {
   checkAndCreateAchievementNotifications,
 } from "./notification.service";
 import { NotificationType } from "../types/notification.types";
+import { COURSE_CATEGORIES } from "../constants/courseCategories";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -16,6 +17,8 @@ export interface GeneratedPreview {
   icon: string;
   color: string;
   topics: string[];
+  category?: string;
+  imageUrl?: string | null;
 }
 
 const FALLBACK_COLORS = [
@@ -40,13 +43,18 @@ async function generateCourseStructure(
       },
       {
         role: "user",
-        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)`,
+        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)\n- category: string | null (classify into ONE of: ${COURSE_CATEGORIES.join(", ")}. Use null if none fit.)`,
       },
     ],
   });
 
   const raw = completion.choices[0].message.content ?? "{}";
   const parsed = JSON.parse(raw) as Partial<GeneratedPreview>;
+
+  const category =
+    parsed.category && (COURSE_CATEGORIES as readonly string[]).includes(parsed.category)
+      ? parsed.category
+      : undefined;
 
   return {
     description: parsed.description ?? `A comprehensive course on ${title}.`,
@@ -59,13 +67,26 @@ async function generateCourseStructure(
       Array.isArray(parsed.topics) && parsed.topics.length > 0
         ? parsed.topics
         : ["Introduction", "Core Concepts", "Practice & Review"],
+    category,
   };
 }
 
 export const generateTopicsPreview = async (
   title: string,
 ): Promise<GeneratedPreview> => {
-  return generateCourseStructure(title);
+  const preview = await generateCourseStructure(title);
+
+  let imageUrl: string | null = null;
+  if (preview.category) {
+    const images = await prisma.categoryImage.findMany({
+      where: { category: preview.category },
+    });
+    if (images.length > 0) {
+      imageUrl = images[Math.floor(Math.random() * images.length)].imageUrl;
+    }
+  }
+
+  return { ...preview, imageUrl };
 };
 
 export const createCourse = async (
@@ -80,6 +101,16 @@ export const createCourse = async (
 
   const generated = preview ?? (await generateCourseStructure(title));
 
+  let imageUrl: string | null = preview?.imageUrl ?? null;
+  if (!imageUrl && generated.category) {
+    const images = await prisma.categoryImage.findMany({
+      where: { category: generated.category },
+    });
+    if (images.length > 0) {
+      imageUrl = images[Math.floor(Math.random() * images.length)].imageUrl;
+    }
+  }
+
   const course = await prisma.$transaction(async (tx) => {
     const newCourse = await tx.course.create({
       data: {
@@ -87,6 +118,7 @@ export const createCourse = async (
         description: generated.description,
         icon: generated.icon,
         color: generated.color,
+        imageUrl,
         topics: {
           create: generated.topics.map((t, i) => ({ title: t, order: i })),
         },
@@ -109,6 +141,7 @@ export const createCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
+    imageUrl: course.imageUrl,
     topics: course.topics.map((t) => ({
       id: t.id,
       title: t.title,
@@ -154,6 +187,7 @@ export const getUserCourses = async (clerkId: string) => {
       description: course.description,
       color: course.color,
       icon: course.icon,
+      imageUrl: course.imageUrl,
       topicTitles: course.topics.map((t) => t.title),
       totalTopics: total,
       topicsCompleted: completed,
@@ -199,6 +233,7 @@ export const getCourseById = async (clerkId: string, courseId: string) => {
     description: course.description,
     color: course.color,
     icon: course.icon,
+    imageUrl: course.imageUrl,
     topics,
     totalTopics: total,
     topicsCompleted,
@@ -245,6 +280,7 @@ export const updateCourse = async (
     description: course.description,
     color: course.color,
     icon: course.icon,
+    imageUrl: course.imageUrl,
     topics,
     totalTopics: total,
     topicsCompleted,

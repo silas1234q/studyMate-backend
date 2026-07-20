@@ -244,3 +244,12 @@ model StudySchedule {
   @@index([isActive])
   @@index([userId])
 }
+
+model CategoryImage {
+  id        String   @id @default(uuid())
+  category  String
+  imageUrl  String
+  createdAt DateTime @default(now())
+
+  @@index([category])
+}
