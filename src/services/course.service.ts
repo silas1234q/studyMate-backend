@@ -32,7 +32,21 @@ const FALLBACK_COLORS = [
 
 async function generateCourseStructure(
   title: string,
+  outlineText?: string | null,
 ): Promise<GeneratedPreview> {
+  // With an uploaded outline the topic list is transcribed, not invented — this is
+  // what stops the AI teaching a generic version of the student's course.
+  const topicsInstruction = outlineText
+    ? `- topics: string[] (derive these from the COURSE OUTLINE below. Use the outline's own ` +
+      `topics, wording and ordering. Do not invent topics it doesn't contain, and do not omit ` +
+      `any it does. Only if the outline is unreadable or lists no topics, fall back to 8-12 ` +
+      `sensible topics for the title.)`
+    : `- topics: string[] (8-12 topic titles in logical learning order)`;
+
+  const outlineSection = outlineText
+    ? `\n\nCOURSE OUTLINE (transcribed from the student's own syllabus):\n${outlineText.slice(0, 6000)}`
+    : "";
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },
@@ -43,7 +57,7 @@ async function generateCourseStructure(
       },
       {
         role: "user",
-        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n- topics: string[] (8-12 topic titles in logical learning order)\n- category: string | null (classify into ONE of: ${COURSE_CATEGORIES.join(", ")}. Use null if none fit.)`,
+        content: `Create a structured course outline for: "${title}"\n\nReturn JSON with:\n- description: string (1-2 sentence course overview)\n- icon: string (single relevant emoji)\n- color: string (vibrant hex color, e.g. "#6541F0")\n${topicsInstruction}\n- category: string | null (classify into ONE of: ${COURSE_CATEGORIES.join(", ")}. Use null if none fit.)${outlineSection}`,
       },
     ],
   });
@@ -73,8 +87,9 @@ async function generateCourseStructure(
 
 export const generateTopicsPreview = async (
   title: string,
+  outlineText?: string | null,
 ): Promise<GeneratedPreview> => {
-  const preview = await generateCourseStructure(title);
+  const preview = await generateCourseStructure(title, outlineText);
 
   let imageUrl: string | null = null;
   if (preview.category) {

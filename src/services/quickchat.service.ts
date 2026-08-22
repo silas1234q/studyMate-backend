@@ -40,7 +40,15 @@ export async function getConversationMessages(clerkId: string, conversationId: s
   return prisma.quickChatMessage.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      createdAt: true,
+      attachmentUrl: true,
+      attachmentName: true,
+      attachmentType: true,
+    },
   });
 }
 
@@ -62,9 +70,21 @@ export async function updateConversationTitle(conversationId: string, title: str
   });
 }
 
-export async function addMessage(conversationId: string, role: string, content: string) {
+export async function addMessage(
+  conversationId: string,
+  role: string,
+  content: string,
+  attachment?: { url?: string | null; name?: string | null; type?: string | null },
+) {
   await prisma.quickChatMessage.create({
-    data: { conversationId, role, content },
+    data: {
+      conversationId,
+      role,
+      content,
+      attachmentUrl: attachment?.url ?? null,
+      attachmentName: attachment?.name ?? null,
+      attachmentType: attachment?.type ?? null,
+    },
   });
   // Touch updatedAt
   await prisma.quickConversation.update({

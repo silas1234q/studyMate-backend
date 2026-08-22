@@ -2,9 +2,14 @@ import { Request, Response } from "express";
 import OpenAI from "openai";
 import { getAuth } from "@clerk/express";
 import { getUserPreferences } from "../services/user.service";
-import { buildSystemPrompt } from "../services/chat.service";
+import {
+  buildSystemPrompt,
+  buildMaterialSection,
+  attachToLastUserMessage,
+} from "../services/chat.service";
 import prisma from "../config/db.config";
 import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
+import { buildMaterialContext } from "../services/material.service";
 import AppError from "../errors/AppError";
 import { catchAsync } from "../utils/catchAsync";
 
@@ -95,12 +100,28 @@ export async function handleTopicChat(req: Request, res: Response) {
     return;
   }
 
-  const { courseTitle, topicName, messages: rawMessages, topicId, userMessage } = req.body as {
+  const {
+    courseTitle,
+    topicName,
+    messages: rawMessages,
+    topicId,
+    courseId,
+    userMessage,
+    attachmentUrl,
+    attachmentName,
+    attachmentType,
+    attachmentText,
+  } = req.body as {
     courseTitle: string;
     topicName: string;
     messages: unknown[];
     topicId?: string;
+    courseId?: string;
     userMessage?: string;
+    attachmentUrl?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+    attachmentText?: string;
   };
 
   if (!courseTitle || !topicName || !Array.isArray(rawMessages)) {
@@ -137,20 +158,30 @@ export async function handleTopicChat(req: Request, res: Response) {
       }
     }
 
-    const [prefs, aiModel] = await Promise.all([
+    const [prefs, aiModel, material] = await Promise.all([
       getUserPreferences(userId),
       getAiModel(userId),
+      courseId ? buildMaterialContext(courseId, topicId) : Promise.resolve(null),
     ]);
 
     // Persist the user's message and increment usage
     if (topicId && userMessage && dbUser) {
       await prisma.chatMessage.create({
-        data: { userId: dbUser.id, topicId, role: "user", content: userMessage },
+        data: {
+          userId: dbUser.id,
+          topicId,
+          role: "user",
+          content: userMessage,
+          attachmentUrl: attachmentUrl ?? null,
+          attachmentName: attachmentName ?? null,
+          attachmentType: attachmentType ?? null,
+        },
       });
       await incrementChatUsage(userId);
     }
 
-    const systemPrompt = buildSystemPrompt(prefs, courseTitle, topicName);
+    const systemPrompt =
+      buildSystemPrompt(prefs, courseTitle, topicName) + buildMaterialSection(material);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -162,12 +193,24 @@ export async function handleTopicChat(req: Request, res: Response) {
 
     let fullResponse = "";
 
+    const chatMessages = attachToLastUserMessage(
+      messages,
+      attachmentUrl
+        ? {
+            url: attachmentUrl,
+            name: attachmentName,
+            type: attachmentType,
+            text: attachmentText,
+          }
+        : null,
+    );
+
     // ── Stream the text explanation ───────────────────────────────────────────
     const textStream = await openai.chat.completions.create({
       model: aiModel,
       max_tokens: 1024,
       stream: true,
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      messages: [{ role: "system", content: systemPrompt }, ...chatMessages],
     });
 
     for await (const chunk of textStream) {
@@ -283,7 +326,14 @@ export const getTopicChatHistory = catchAsync(async (req: Request, res: Response
   const messages = await prisma.chatMessage.findMany({
     where: { userId: dbUser.id, topicId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      attachmentUrl: true,
+      attachmentName: true,
+      attachmentType: true,
+    },
     take: limit,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });

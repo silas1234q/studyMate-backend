@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
+import { buildMaterialContext } from "./material.service";
+import { buildMaterialSection } from "./chat.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -71,6 +73,8 @@ export const generateObjectives = async (
     }));
   }
 
+  const material = await buildMaterialContext(courseId, topicId);
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },
@@ -86,7 +90,8 @@ export const generateObjectives = async (
           `within the course "${body.courseTitle}".\n\n` +
           `Each objective should be a concise statement of what a student will understand or be able to do ` +
           `after studying this topic. Start each with a verb (e.g. "Explain", "Identify", "Apply").\n\n` +
-          `Return JSON: { "objectives": string[] }`,
+          `Return JSON: { "objectives": string[] }` +
+          buildMaterialSection(material),
       },
     ],
   });
@@ -278,6 +283,8 @@ export const generateQuiz = async (
       ? body.objectives.map((o) => `- ${o}`).join("\n")
       : "(no specific objectives provided)";
 
+  const material = await buildMaterialContext(courseId, topicId);
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 1200,
@@ -309,7 +316,11 @@ export const generateQuiz = async (
           `      "explanation": "string"\n` +
           `    }\n` +
           `  ]\n` +
-          `}`,
+          `}` +
+          buildMaterialSection(material) +
+          (material
+            ? `\n- Every question must be answerable from the course material above.`
+            : ""),
       },
     ],
   });

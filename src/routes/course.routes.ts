@@ -25,6 +25,13 @@ import {
   handleUpdateObjective,
   handleDeleteObjective,
 } from "../controllers/objectives.controller";
+import {
+  handleExtractOutline,
+  handleAddMaterial,
+  handleListMaterials,
+  handleDeleteMaterial,
+} from "../controllers/material.controller";
+import { upload, handleUploadErrors } from "../middleware/upload.middleware";
 
 const router = Router();
 
@@ -43,6 +50,12 @@ router.post("/generate", requireClerkAuth, aiLimiter, handleGenerateTopics);
 router.get("/:id", requireClerkAuth, handleGetCourse);
 router.patch("/:id", requireClerkAuth, handleUpdateCourse);
 router.delete("/:id", requireClerkAuth, handleDeleteCourse);
+
+// Course material (uploaded syllabus / notes used to ground AI responses)
+router.post("/outline/extract", requireClerkAuth, aiLimiter, upload.single("file"), handleUploadErrors, handleExtractOutline);
+router.get("/:courseId/materials", requireClerkAuth, handleListMaterials);
+router.post("/:courseId/materials", requireClerkAuth, aiLimiter, upload.single("file"), handleUploadErrors, handleAddMaterial);
+router.delete("/:courseId/materials/:materialId", requireClerkAuth, handleDeleteMaterial);
 
 // Topics
 router.post("/:id/topics", requireClerkAuth, handleAddTopic);

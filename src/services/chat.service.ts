@@ -1,3 +1,4 @@
+import type OpenAI from "openai";
 interface Preferences {
   educationLevel: number;
   explanationDepth: number;
@@ -79,4 +80,71 @@ Math formatting:
 - Never use plain parentheses like \\( ... \\) or \\[ ... \\] — use only $ and $$ delimiters
 
 When an explanation benefits from a visual — or the student explicitly asks to see one — call the show_diagram tool to render a Mermaid.js diagram.`;
+}
+
+/**
+ * The student's uploaded syllabus / notes, framed as authoritative. Appended to
+ * every generation prompt so the AI teaches their institution's material rather
+ * than a generic version of the subject.
+ */
+export function buildMaterialSection(material: string | null): string {
+  if (!material) return "";
+
+  return `\n\nTHE STUDENT'S OWN COURSE MATERIAL (authoritative):\n${material}\n\n` +
+    `Rules for using this material:\n` +
+    `- Teach strictly within the scope of this material. It defines what their institution requires.\n` +
+    `- Match its terminology, notation and depth, even where you would normally phrase things differently.\n` +
+    `- If they ask about something outside it, answer briefly, then say plainly that it is outside their course material.\n` +
+    `- Never introduce topics absent from this material as if they were required.`;
+}
+
+export type Attachment = {
+  url: string;
+  name?: string | null;
+  type?: string | null;
+  /** pre-extracted text, for formats the model can't read directly */
+  text?: string | null;
+};
+
+/**
+ * Attaches a file to the LAST user message only. Sending it with every historical
+ * turn would re-bill vision/file tokens on each request.
+ *
+ * Images and PDFs go to the model as native parts; every other format was already
+ * read at upload time, so its text is injected inline instead.
+ */
+export function attachToLastUserMessage(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  attachment: Attachment | null,
+): OpenAI.ChatCompletionMessageParam[] {
+  const out: OpenAI.ChatCompletionMessageParam[] = [...messages];
+  if (!attachment?.url) return out;
+
+  const lastUserIdx = out.map((m) => m.role).lastIndexOf("user");
+  if (lastUserIdx === -1) return out;
+
+  const originalText = messages[lastUserIdx]?.content || "Please look at this file.";
+  const mimeType = attachment.type ?? "";
+
+  if (mimeType.startsWith("image/")) {
+    out[lastUserIdx] = {
+      role: "user",
+      content: [
+        { type: "text", text: originalText },
+        { type: "image_url", image_url: { url: attachment.url } },
+      ],
+    };
+    return out;
+  }
+
+  // Everything else — PDF included — was read at upload time. Injecting the
+  // extracted text avoids re-downloading and re-encoding the file on every send.
+  if (attachment.text) {
+    out[lastUserIdx] = {
+      role: "user",
+      content:
+        `${originalText}\n\n[Attached file: ${attachment.name ?? "document"}]\n${attachment.text.slice(0, 6000)}`,
+    };
+  }
+  return out;
 }

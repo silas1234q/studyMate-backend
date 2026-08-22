@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import OpenAI from "openai";
 import { getAuth } from "@clerk/express";
 import { getUserPreferences } from "../services/user.service";
-import { buildQuickChatPrompt } from "../services/chat.service";
+import { buildQuickChatPrompt, attachToLastUserMessage } from "../services/chat.service";
 import {
   createConversation,
   listConversations,
@@ -108,10 +108,22 @@ export async function handleQuickChat(req: Request, res: Response) {
 
   await checkFeatureAccess(userId, "quickChat");
 
-  const { conversationId, messages: rawMessages, userMessage } = req.body as {
+  const {
+    conversationId,
+    messages: rawMessages,
+    userMessage,
+    attachmentUrl,
+    attachmentName,
+    attachmentType,
+    attachmentText,
+  } = req.body as {
     conversationId: string;
     messages: unknown[];
     userMessage: string;
+    attachmentUrl?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+    attachmentText?: string;
   };
 
   if (!conversationId || !Array.isArray(rawMessages) || !userMessage) {
@@ -140,7 +152,11 @@ export async function handleQuickChat(req: Request, res: Response) {
     }
 
     // Persist user message
-    await addMessage(conversationId, "user", userMessage);
+    await addMessage(conversationId, "user", userMessage, {
+      url: attachmentUrl,
+      name: attachmentName,
+      type: attachmentType,
+    });
 
     // Auto-set title from first user message if still default
     if (convo.title === "New Chat") {
@@ -164,11 +180,18 @@ export async function handleQuickChat(req: Request, res: Response) {
 
     let fullResponse = "";
 
+    const chatMessages = attachToLastUserMessage(
+      messages,
+      attachmentUrl
+        ? { url: attachmentUrl, name: attachmentName, type: attachmentType, text: attachmentText }
+        : null,
+    );
+
     const textStream = await openai.chat.completions.create({
       model: aiModel,
       max_tokens: 1024,
       stream: true,
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      messages: [{ role: "system", content: systemPrompt }, ...chatMessages],
     });
 
     for await (const chunk of textStream) {

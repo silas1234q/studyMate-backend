@@ -8,6 +8,8 @@ export const PLAN_LIMITS = {
     chatMessagesPerDay: 5,
     quizzesPerDay: 1,
     quickChat: false,
+    courseMaterials: false,
+    chatImages: false,
     illustrations: false,
     aiModel: "gpt-4o-mini" as const,
   },
@@ -16,6 +18,8 @@ export const PLAN_LIMITS = {
     chatMessagesPerDay: Infinity,
     quizzesPerDay: Infinity,
     quickChat: true,
+    courseMaterials: true,
+    chatImages: true,
     illustrations: true,
     aiModel: "gpt-4o" as const,
   },
@@ -211,6 +215,8 @@ export async function getSubscriptionStatus(clerkId: string) {
       chatMessagesPerDay: limits.chatMessagesPerDay === Infinity ? null : limits.chatMessagesPerDay,
       quizzesPerDay: limits.quizzesPerDay === Infinity ? null : limits.quizzesPerDay,
       quickChat: limits.quickChat,
+      courseMaterials: limits.courseMaterials,
+      chatImages: limits.chatImages,
       illustrations: limits.illustrations,
     },
     usage: {
@@ -236,4 +242,26 @@ export async function incrementChatUsage(clerkId: string) {
 export async function incrementQuizUsage(clerkId: string) {
   const user = await getDbUser(clerkId);
   await incrementUsage(user.id, "quizzes");
+}
+
+export async function checkMaterialAccess(clerkId: string) {
+  const user = await getDbUser(clerkId);
+  const sub = await getUserSubscription(user.id);
+  const limits = PLAN_LIMITS[sub.plan as PlanType] ?? PLAN_LIMITS.free;
+  if (limits.courseMaterials) return;
+
+  throw new SubscriptionError(
+    "Uploading course material is a Pro feature. Upgrade to attach your notes and slides."
+  );
+}
+
+export async function checkChatImageAccess(clerkId: string) {
+  const user = await getDbUser(clerkId);
+  const sub = await getUserSubscription(user.id);
+  const limits = PLAN_LIMITS[sub.plan as PlanType] ?? PLAN_LIMITS.free;
+  if (limits.chatImages) return;
+
+  throw new SubscriptionError(
+    "Sending images in chat is a Pro feature. Upgrade to ask about photos and diagrams."
+  );
 }
