@@ -41,6 +41,7 @@ model UserPreferences {
   explanationDepth     Int
   interests            String[]
   timezone             String   @default("UTC")
+  tutorialCompletedAt  DateTime?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }

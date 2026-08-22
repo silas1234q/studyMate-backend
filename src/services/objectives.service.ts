@@ -105,14 +105,14 @@ export const generateObjectives = async (
   }
 
   // Replace any existing objectives for this topic
-  await prisma.$transaction(async (tx) => {
-    await tx.learningObjective.deleteMany({ where: { topicId } });
-    for (let i = 0; i < texts.length; i++) {
-      await tx.learningObjective.create({
-        data: { topicId, text: texts[i], order: i },
-      });
-    }
-  });
+  // Two statements rather than one delete + N sequential creates, which spent a
+  // round trip per objective inside the 5s transaction budget.
+  await prisma.$transaction([
+    prisma.learningObjective.deleteMany({ where: { topicId } }),
+    prisma.learningObjective.createMany({
+      data: texts.map((text, i) => ({ topicId, text, order: i })),
+    }),
+  ]);
 
   const created = await prisma.learningObjective.findMany({
     where: { topicId },
@@ -201,15 +201,13 @@ export const evaluateObjectives = async (
       .map((idx) => objectives[idx])
       .filter(Boolean);
 
-    await prisma.$transaction(
-      toUpsert.map((obj) =>
-        prisma.userObjectiveCoverage.upsert({
-          where: { userId_objectiveId: { userId: user.id, objectiveId: obj.id } },
-          update: {},
-          create: { userId: user.id, objectiveId: obj.id },
-        })
-      )
-    );
+    // One statement, no transaction: the upserts had an empty `update`, so this is
+    // the same "insert if missing" against the @@unique([userId, objectiveId]).
+    // Round-tripping N upserts inside a transaction blew the 5s limit on a remote DB.
+    await prisma.userObjectiveCoverage.createMany({
+      data: toUpsert.map((obj) => ({ userId: user.id, objectiveId: obj.id })),
+      skipDuplicates: true,
+    });
   }
 
   return { coveredIndices };

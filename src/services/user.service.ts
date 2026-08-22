@@ -40,7 +40,7 @@ export const saveOnboarding = async (clerkId: string, data: OnboardingInput) => 
 
 export const updatePreferences = async (
   clerkId: string,
-  data: { timezone?: string },
+  data: { timezone?: string; tutorialCompletedAt?: Date },
 ) => {
   const user = await prisma.user.findUnique({ where: { clerkId } });
   if (!user) throw new NotFoundError("user");

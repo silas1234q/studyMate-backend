@@ -91,14 +91,21 @@ export const handleUpdatePreferences = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
   if (!userId) throw new AuthError("user not authenticated");
 
-  const { timezone } = req.body;
-  const data: { timezone?: string } = {};
+  const { timezone, tutorialCompleted } = req.body;
+  const data: { timezone?: string; tutorialCompletedAt?: Date } = {};
 
   if (timezone !== undefined) {
     if (typeof timezone !== "string" || !isValidTimezone(timezone)) {
       throw new ValidationError("timezone must be a valid IANA timezone");
     }
     data.timezone = timezone;
+  }
+
+  if (tutorialCompleted !== undefined) {
+    if (typeof tutorialCompleted !== "boolean") {
+      throw new ValidationError("tutorialCompleted must be a boolean");
+    }
+    if (tutorialCompleted) data.tutorialCompletedAt = new Date();
   }
 
   const preferences = await updatePreferences(userId, data);
