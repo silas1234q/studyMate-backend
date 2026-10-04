@@ -1,5 +1,6 @@
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
+import { withLegacyAttachment } from "./chat.service";
 
 export async function getDbUser(clerkId: string) {
   const user = await prisma.user.findUnique({
@@ -37,11 +38,22 @@ export async function getConversationMessages(clerkId: string, conversationId: s
   });
   if (!convo) throw new NotFoundError("conversation");
 
-  return prisma.quickChatMessage.findMany({
+  const messages = await prisma.quickChatMessage.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      createdAt: true,
+      attachmentUrls: true,
+      attachmentNames: true,
+      attachmentTypes: true,
+    },
   });
+
+  // Serves the legacy singular fields alongside the arrays, for the web client.
+  return messages.map(withLegacyAttachment);
 }
 
 export async function deleteConversation(clerkId: string, conversationId: string) {
@@ -62,9 +74,23 @@ export async function updateConversationTitle(conversationId: string, title: str
   });
 }
 
-export async function addMessage(conversationId: string, role: string, content: string) {
+export async function addMessage(
+  conversationId: string,
+  role: string,
+  content: string,
+  attachments?: Array<{ url: string; name?: string | null; type?: string | null }>,
+) {
+  const list = (attachments ?? []).filter((a) => !!a?.url);
   await prisma.quickChatMessage.create({
-    data: { conversationId, role, content },
+    data: {
+      conversationId,
+      role,
+      content,
+      attachmentUrls: list.map((a) => a.url),
+      // Coalesced so all three arrays stay the same length and index-aligned.
+      attachmentNames: list.map((a) => a.name ?? ""),
+      attachmentTypes: list.map((a) => a.type ?? ""),
+    },
   });
   // Touch updatedAt
   await prisma.quickConversation.update({

@@ -2,7 +2,7 @@ import { catchAsync } from "../utils/catchAsync";
 import { getAuth } from "@clerk/express";
 import AuthError from "../errors/AuthError";
 import ValidationError from "../errors/ValidationError";
-import { saveOnboarding, getUserPreferences, updatePreferences } from "../services/user.service";
+import { saveOnboarding, getUserPreferences, updatePreferences, deleteAccount } from "../services/user.service";
 
 function isValidTimezone(tz: string): boolean {
   try {
@@ -91,8 +91,8 @@ export const handleUpdatePreferences = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
   if (!userId) throw new AuthError("user not authenticated");
 
-  const { timezone } = req.body;
-  const data: { timezone?: string } = {};
+  const { timezone, tutorialCompleted } = req.body;
+  const data: { timezone?: string; tutorialCompletedAt?: Date } = {};
 
   if (timezone !== undefined) {
     if (typeof timezone !== "string" || !isValidTimezone(timezone)) {
@@ -101,6 +101,22 @@ export const handleUpdatePreferences = catchAsync(async (req, res) => {
     data.timezone = timezone;
   }
 
+  if (tutorialCompleted !== undefined) {
+    if (typeof tutorialCompleted !== "boolean") {
+      throw new ValidationError("tutorialCompleted must be a boolean");
+    }
+    if (tutorialCompleted) data.tutorialCompletedAt = new Date();
+  }
+
   const preferences = await updatePreferences(userId, data);
   res.json(preferences);
+});
+
+export const handleDeleteAccount = catchAsync(async (req, res) => {
+  const { userId } = getAuth(req);
+  if (!userId) throw new AuthError("user not authenticated");
+  await deleteAccount(userId);
+  // A JSON body rather than 204: both clients parse every response, and an
+  // empty body would surface a successful deletion as a parse error.
+  res.status(200).json({ success: true });
 });

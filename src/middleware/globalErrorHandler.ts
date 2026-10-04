@@ -33,11 +33,36 @@ const handlePrismaError = (err: any) => {
   return err;
 };
 
+/**
+ * body-parser rejects oversized or malformed bodies before any route runs, and its
+ * errors sit outside the AppError hierarchy — untranslated they surface as a 500
+ * with a stack trace, which tells the user nothing actionable.
+ */
+const handleBodyParserError = (err: any) => {
+  if (err.type === "entity.too.large") {
+    return new AppError({
+      message: "That content is too large to process. Try a smaller file.",
+      statusCode: 413,
+      type: "PAYLOAD_TOO_LARGE",
+    });
+  }
+
+  if (err.type === "entity.parse.failed") {
+    return new AppError({
+      message: "Malformed request body",
+      statusCode: 400,
+      type: "VALIDATION_ERROR",
+    });
+  }
+
+  return err;
+};
+
 const normalizeError = (err: any) => {
   if (err instanceof AppError) return err;
 
   return new AppError({
-    message: err,
+    message: err?.message ?? String(err),
     statusCode: 500,
     type: "INTERNAL_ERROR",
     isOperational: false,
@@ -76,6 +101,11 @@ export const globalErrorHandler = (err: any, req: Request, res: Response, next: 
   // Prisma errors
   if (error.code?.startsWith("P")) {
     error = handlePrismaError(error);
+  }
+
+  // body-parser errors (oversized/malformed body)
+  if (!(error instanceof AppError)) {
+    error = handleBodyParserError(error);
   }
 
   // Normalize unknown errors

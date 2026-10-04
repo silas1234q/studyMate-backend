@@ -2,7 +2,11 @@ import { Request, Response } from "express";
 import OpenAI from "openai";
 import { getAuth } from "@clerk/express";
 import { getUserPreferences } from "../services/user.service";
-import { buildQuickChatPrompt } from "../services/chat.service";
+import {
+  buildQuickChatPrompt,
+  attachToLastUserMessage,
+  MAX_ATTACHMENTS,
+} from "../services/chat.service";
 import {
   createConversation,
   listConversations,
@@ -108,11 +112,39 @@ export async function handleQuickChat(req: Request, res: Response) {
 
   await checkFeatureAccess(userId, "quickChat");
 
-  const { conversationId, messages: rawMessages, userMessage } = req.body as {
+  const {
+    conversationId,
+    messages: rawMessages,
+    userMessage,
+    attachmentUrl,
+    attachmentName,
+    attachmentType,
+    attachmentText,
+    attachments: rawAttachments,
+  } = req.body as {
     conversationId: string;
     messages: unknown[];
     userMessage: string;
+    // Legacy singular fields, still sent by the web client.
+    attachmentUrl?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+    attachmentText?: string;
+    // Mobile sends a list.
+    attachments?: Array<{ url: string; name?: string; type?: string; text?: string }>;
   };
+
+  // One normalised list, whichever shape the client used. Capped so a client
+  // cannot make the model bill for an unbounded number of images.
+  const attachmentList = (
+    rawAttachments?.length
+      ? rawAttachments
+      : attachmentUrl
+        ? [{ url: attachmentUrl, name: attachmentName, type: attachmentType, text: attachmentText }]
+        : []
+  )
+    .filter((a) => !!a?.url)
+    .slice(0, MAX_ATTACHMENTS);
 
   if (!conversationId || !Array.isArray(rawMessages) || !userMessage) {
     res.status(400).json({ message: "conversationId, messages, and userMessage are required" });
@@ -140,7 +172,7 @@ export async function handleQuickChat(req: Request, res: Response) {
     }
 
     // Persist user message
-    await addMessage(conversationId, "user", userMessage);
+    await addMessage(conversationId, "user", userMessage, attachmentList);
 
     // Auto-set title from first user message if still default
     if (convo.title === "New Chat") {
@@ -164,11 +196,13 @@ export async function handleQuickChat(req: Request, res: Response) {
 
     let fullResponse = "";
 
+    const chatMessages = attachToLastUserMessage(messages, attachmentList);
+
     const textStream = await openai.chat.completions.create({
       model: aiModel,
       max_tokens: 1024,
       stream: true,
-      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      messages: [{ role: "system", content: systemPrompt }, ...chatMessages],
     });
 
     for await (const chunk of textStream) {

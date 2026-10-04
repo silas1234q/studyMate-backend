@@ -2,6 +2,8 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { requireClerkAuth } from "../middleware/requireAuth.middleware";
 import { handleTopicChat, getTopicChatHistory } from "../controllers/chat.controller";
+import { handleChatAttachmentUpload } from "../controllers/material.controller";
+import { upload, handleUploadErrors } from "../middleware/upload.middleware";
 
 const router = Router();
 
@@ -16,5 +18,6 @@ const aiLimiter = rateLimit({
 
 router.post("/topic", requireClerkAuth, aiLimiter, handleTopicChat);
 router.get("/topic/:topicId/history", requireClerkAuth, getTopicChatHistory);
+router.post("/attachment", requireClerkAuth, aiLimiter, upload.single("file"), handleUploadErrors, handleChatAttachmentUpload);
 
 export default router;

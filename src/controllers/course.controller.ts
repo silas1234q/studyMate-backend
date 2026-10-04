@@ -45,14 +45,17 @@ export const handleGenerateTopics = catchAsync(
   async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     if (!userId) throw new AuthError("user not authenticated");
-    const { title } = req.body as { title?: string };
+    const { title, outlineText } = req.body as { title?: string; outlineText?: string };
     if (!title || typeof title !== "string" || !title.trim()) {
       throw new ValidationError("title is required");
     }
     if (title.length > 200) {
       throw new ValidationError("title must be at most 200 characters");
     }
-    const preview = await generateTopicsPreview(title.trim());
+    if (outlineText !== undefined && typeof outlineText !== "string") {
+      throw new ValidationError("outlineText must be a string");
+    }
+    const preview = await generateTopicsPreview(title.trim(), outlineText?.slice(0, 20000));
     res.json(preview);
   }
 );

@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
+import { buildMaterialContext } from "./material.service";
+import { buildMaterialSection } from "./chat.service";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -71,6 +73,8 @@ export const generateObjectives = async (
     }));
   }
 
+  const material = await buildMaterialContext(courseId, topicId);
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },
@@ -86,7 +90,8 @@ export const generateObjectives = async (
           `within the course "${body.courseTitle}".\n\n` +
           `Each objective should be a concise statement of what a student will understand or be able to do ` +
           `after studying this topic. Start each with a verb (e.g. "Explain", "Identify", "Apply").\n\n` +
-          `Return JSON: { "objectives": string[] }`,
+          `Return JSON: { "objectives": string[] }` +
+          buildMaterialSection(material),
       },
     ],
   });
@@ -105,14 +110,14 @@ export const generateObjectives = async (
   }
 
   // Replace any existing objectives for this topic
-  await prisma.$transaction(async (tx) => {
-    await tx.learningObjective.deleteMany({ where: { topicId } });
-    for (let i = 0; i < texts.length; i++) {
-      await tx.learningObjective.create({
-        data: { topicId, text: texts[i], order: i },
-      });
-    }
-  });
+  // Two statements rather than one delete + N sequential creates, which spent a
+  // round trip per objective inside the 5s transaction budget.
+  await prisma.$transaction([
+    prisma.learningObjective.deleteMany({ where: { topicId } }),
+    prisma.learningObjective.createMany({
+      data: texts.map((text, i) => ({ topicId, text, order: i })),
+    }),
+  ]);
 
   const created = await prisma.learningObjective.findMany({
     where: { topicId },
@@ -201,15 +206,13 @@ export const evaluateObjectives = async (
       .map((idx) => objectives[idx])
       .filter(Boolean);
 
-    await prisma.$transaction(
-      toUpsert.map((obj) =>
-        prisma.userObjectiveCoverage.upsert({
-          where: { userId_objectiveId: { userId: user.id, objectiveId: obj.id } },
-          update: {},
-          create: { userId: user.id, objectiveId: obj.id },
-        })
-      )
-    );
+    // One statement, no transaction: the upserts had an empty `update`, so this is
+    // the same "insert if missing" against the @@unique([userId, objectiveId]).
+    // Round-tripping N upserts inside a transaction blew the 5s limit on a remote DB.
+    await prisma.userObjectiveCoverage.createMany({
+      data: toUpsert.map((obj) => ({ userId: user.id, objectiveId: obj.id })),
+      skipDuplicates: true,
+    });
   }
 
   return { coveredIndices };
@@ -280,6 +283,8 @@ export const generateQuiz = async (
       ? body.objectives.map((o) => `- ${o}`).join("\n")
       : "(no specific objectives provided)";
 
+  const material = await buildMaterialContext(courseId, topicId);
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 1200,
@@ -311,7 +316,11 @@ export const generateQuiz = async (
           `      "explanation": "string"\n` +
           `    }\n` +
           `  ]\n` +
-          `}`,
+          `}` +
+          buildMaterialSection(material) +
+          (material
+            ? `\n- Every question must be answerable from the course material above.`
+            : ""),
       },
     ],
   });

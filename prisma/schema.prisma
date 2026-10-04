@@ -1,61 +1,63 @@
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
 }
+
 datasource db {
   provider = "postgresql"
-
 }
 
 model User {
-  id              String            @id @default(uuid())
-  clerkId         String            @unique
-  email           String            @unique
-  firstName       String
-  lastName        String
-  avatarUrl       String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  preferences          UserPreferences?
-  enrollments          Enrollment[]
-  topicCompletions     TopicCompletion[]
-  chatMessages         ChatMessage[]
-  objectiveCoverages   UserObjectiveCoverage[]
-  streak               UserStreak?
-  dailyActivities      DailyActivity[]
-  quickConversations   QuickConversation[]
-  subscription         Subscription?
-  usageTrackers        UsageTracker[]
-  notifications        Notification[]
-  studySchedules       StudySchedule[]
+  id                 String                  @id @default(uuid())
+  clerkId            String                  @unique
+  email              String                  @unique
+  firstName          String
+  lastName           String
+  avatarUrl          String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  preferences        UserPreferences?
+  enrollments        Enrollment[]
+  topicCompletions   TopicCompletion[]
+  chatMessages       ChatMessage[]
+  objectiveCoverages UserObjectiveCoverage[]
+  streak             UserStreak?
+  dailyActivities    DailyActivity[]
+  quickConversations QuickConversation[]
+  subscription       Subscription?
+  usageTrackers      UsageTracker[]
+  notifications      Notification[]
+  studySchedules     StudySchedule[]
+  courseMaterials    CourseMaterial[]
 }
 
 model UserPreferences {
-  id                   String   @id @default(uuid())
-  userId               String   @unique
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String    @id @default(uuid())
+  userId               String    @unique
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   educationLevel       Int
   studySessionDuration Int
   learningGoal         String
   explanationDepth     Int
   interests            String[]
-  timezone             String   @default("UTC")
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  timezone             String    @default("UTC")
+  tutorialCompletedAt  DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 }
 
 model Course {
-  id          String       @id @default(uuid())
+  id          String           @id @default(uuid())
   title       String
   description String
   color       String
   icon        String
   imageUrl    String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
   topics      Topic[]
   enrollments Enrollment[]
+  materials   CourseMaterial[]
 }
 
 model Topic {
@@ -69,6 +71,7 @@ model Topic {
   completions  TopicCompletion[]
   chatMessages ChatMessage[]
   objectives   LearningObjective[]
+  materials    CourseMaterial[]
 
   @@unique([courseId, order])
 }
@@ -99,14 +102,20 @@ model TopicCompletion {
 }
 
 model ChatMessage {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  topicId   String
-  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  role      String
-  content   String
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId        String
+  topic          Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  // The pre-array attachmentUrl/Name/Type columns still exist in the database.
+  // The multi_attachments migration backfilled them into these arrays but left
+  // them in place so it stayed reversible; drop them in a follow-up migration.
+  attachmentUrls  String[] @default([])
+  attachmentNames String[] @default([])
+  attachmentTypes String[] @default([])
+  createdAt      DateTime @default(now())
 
   @@index([userId, topicId])
 }
@@ -180,6 +189,12 @@ model QuickChatMessage {
   conversation   QuickConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   content        String
+  // The pre-array attachmentUrl/Name/Type columns still exist in the database.
+  // The multi_attachments migration backfilled them into these arrays but left
+  // them in place so it stayed reversible; drop them in a follow-up migration.
+  attachmentUrls  String[] @default([])
+  attachmentNames String[] @default([])
+  attachmentTypes String[] @default([])
   createdAt      DateTime          @default(now())
 
   @@index([conversationId])
@@ -252,4 +267,23 @@ model CategoryImage {
   createdAt DateTime @default(now())
 
   @@index([category])
+}
+
+model CourseMaterial {
+  id            String   @id @default(uuid())
+  courseId      String
+  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topicId       String?
+  topic         Topic?   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind          String
+  fileUrl       String
+  fileName      String
+  mimeType      String
+  publicId      String
+  extractedText String
+  createdAt     DateTime @default(now())
+
+  @@index([courseId, topicId])
 }
