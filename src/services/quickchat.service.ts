@@ -1,5 +1,6 @@
 import prisma from "../config/db.config";
 import NotFoundError from "../errors/NotFoundError";
+import { withLegacyAttachment } from "./chat.service";
 
 export async function getDbUser(clerkId: string) {
   const user = await prisma.user.findUnique({
@@ -37,7 +38,7 @@ export async function getConversationMessages(clerkId: string, conversationId: s
   });
   if (!convo) throw new NotFoundError("conversation");
 
-  return prisma.quickChatMessage.findMany({
+  const messages = await prisma.quickChatMessage.findMany({
     where: { conversationId },
     orderBy: { createdAt: "asc" },
     select: {
@@ -45,11 +46,14 @@ export async function getConversationMessages(clerkId: string, conversationId: s
       role: true,
       content: true,
       createdAt: true,
-      attachmentUrl: true,
-      attachmentName: true,
-      attachmentType: true,
+      attachmentUrls: true,
+      attachmentNames: true,
+      attachmentTypes: true,
     },
   });
+
+  // Serves the legacy singular fields alongside the arrays, for the web client.
+  return messages.map(withLegacyAttachment);
 }
 
 export async function deleteConversation(clerkId: string, conversationId: string) {
@@ -74,16 +78,18 @@ export async function addMessage(
   conversationId: string,
   role: string,
   content: string,
-  attachment?: { url?: string | null; name?: string | null; type?: string | null },
+  attachments?: Array<{ url: string; name?: string | null; type?: string | null }>,
 ) {
+  const list = (attachments ?? []).filter((a) => !!a?.url);
   await prisma.quickChatMessage.create({
     data: {
       conversationId,
       role,
       content,
-      attachmentUrl: attachment?.url ?? null,
-      attachmentName: attachment?.name ?? null,
-      attachmentType: attachment?.type ?? null,
+      attachmentUrls: list.map((a) => a.url),
+      // Coalesced so all three arrays stay the same length and index-aligned.
+      attachmentNames: list.map((a) => a.name ?? ""),
+      attachmentTypes: list.map((a) => a.type ?? ""),
     },
   });
   // Touch updatedAt

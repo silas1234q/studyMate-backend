@@ -109,9 +109,12 @@ model ChatMessage {
   topic          Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
   role           String
   content        String
-  attachmentUrl  String?
-  attachmentName String?
-  attachmentType String?
+  // The pre-array attachmentUrl/Name/Type columns still exist in the database.
+  // The multi_attachments migration backfilled them into these arrays but left
+  // them in place so it stayed reversible; drop them in a follow-up migration.
+  attachmentUrls  String[] @default([])
+  attachmentNames String[] @default([])
+  attachmentTypes String[] @default([])
   createdAt      DateTime @default(now())
 
   @@index([userId, topicId])
@@ -186,9 +189,12 @@ model QuickChatMessage {
   conversation   QuickConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   content        String
-  attachmentUrl  String?
-  attachmentName String?
-  attachmentType String?
+  // The pre-array attachmentUrl/Name/Type columns still exist in the database.
+  // The multi_attachments migration backfilled them into these arrays but left
+  // them in place so it stayed reversible; drop them in a follow-up migration.
+  attachmentUrls  String[] @default([])
+  attachmentNames String[] @default([])
+  attachmentTypes String[] @default([])
   createdAt      DateTime          @default(now())
 
   @@index([conversationId])

@@ -42,7 +42,34 @@ const isOfficeDoc = (mimeType: string) => OFFICE_MIME_TYPES.has(mimeType);
 const isPlainText = (mimeType: string) =>
   mimeType.startsWith("text/") || mimeType === "application/json";
 
-export type UploadedFile = { url: string; publicId: string; resourceType: "image" | "raw" };
+/**
+ * The only image formats the OpenAI vision API will accept. Anything else has
+ * to be converted at upload time or the model rejects the URL outright with
+ * "invalid_image_format" — note this is narrower than the set of formats
+ * Cloudinary (or a browser) will happily store and display.
+ */
+const MODEL_SAFE_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+]);
+
+/**
+ * True for images the model cannot read — HEIC/HEIF above all, which is the
+ * default camera format on iOS, plus AVIF, BMP and TIFF.
+ */
+const needsImageConversion = (mimeType: string) =>
+  isImage(mimeType) && !MODEL_SAFE_IMAGE_TYPES.has(mimeType.toLowerCase());
+
+export type UploadedFile = {
+  url: string;
+  publicId: string;
+  resourceType: "image" | "raw";
+  /** The stored type, which differs from the uploaded one after conversion. */
+  mimeType: string;
+};
 
 // ── Upload ───────────────────────────────────────────────────────────────────
 
@@ -72,12 +99,22 @@ export function uploadFile(
 ): Promise<UploadedFile> {
   const resourceType: "image" | "raw" = isImage(mimeType) ? "image" : "raw";
 
+  // Converting only what has to be converted: forcing every image to jpg would
+  // flatten PNG transparency and re-compress work that was already fine.
+  const convert = needsImageConversion(mimeType);
+  const storedMimeType = convert ? "image/jpeg" : mimeType;
+
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: resourceType },
+      { folder, resource_type: resourceType, ...(convert ? { format: "jpg" } : {}) },
       (error, result) => {
         if (error || !result) return reject(toUploadError(error));
-        resolve({ url: result.secure_url, publicId: result.public_id, resourceType });
+        resolve({
+          url: result.secure_url,
+          publicId: result.public_id,
+          resourceType,
+          mimeType: storedMimeType,
+        });
       },
     );
     stream.end(buffer);
@@ -276,7 +313,13 @@ export async function addMaterial(
     if (!topic) throw new ValidationError("topic does not belong to this course");
   }
 
-  const { url, publicId, extractedText } = await uploadAndExtract(buffer, mimeType, fileName);
+  // storedMimeType so a converted HEIC is recorded as the JPEG it became —
+  // the DB type drives both the delete call and what the model is handed later.
+  const { url, publicId, extractedText, mimeType: storedMimeType } = await uploadAndExtract(
+    buffer,
+    mimeType,
+    fileName,
+  );
 
   return prisma.courseMaterial.create({
     data: {
@@ -286,7 +329,7 @@ export async function addMaterial(
       kind: "material",
       fileUrl: url,
       fileName,
-      mimeType,
+      mimeType: storedMimeType,
       publicId,
       extractedText,
     },

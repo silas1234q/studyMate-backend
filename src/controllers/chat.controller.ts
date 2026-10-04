@@ -6,6 +6,8 @@ import {
   buildSystemPrompt,
   buildMaterialSection,
   attachToLastUserMessage,
+  withLegacyAttachment,
+  MAX_ATTACHMENTS,
 } from "../services/chat.service";
 import prisma from "../config/db.config";
 import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
@@ -111,6 +113,7 @@ export async function handleTopicChat(req: Request, res: Response) {
     attachmentName,
     attachmentType,
     attachmentText,
+    attachments: rawAttachments,
   } = req.body as {
     courseTitle: string;
     topicName: string;
@@ -118,11 +121,26 @@ export async function handleTopicChat(req: Request, res: Response) {
     topicId?: string;
     courseId?: string;
     userMessage?: string;
+    // Legacy singular fields, still sent by the web client.
     attachmentUrl?: string;
     attachmentName?: string;
     attachmentType?: string;
     attachmentText?: string;
+    // Mobile sends a list.
+    attachments?: Array<{ url: string; name?: string; type?: string; text?: string }>;
   };
+
+  // One normalised list, whichever shape the client used. Capped so a client
+  // cannot make the model bill for an unbounded number of images.
+  const attachmentList = (
+    rawAttachments?.length
+      ? rawAttachments
+      : attachmentUrl
+        ? [{ url: attachmentUrl, name: attachmentName, type: attachmentType, text: attachmentText }]
+        : []
+  )
+    .filter((a) => !!a?.url)
+    .slice(0, MAX_ATTACHMENTS);
 
   if (!courseTitle || !topicName || !Array.isArray(rawMessages)) {
     res.status(400).json({ message: "courseTitle, topicName, and messages are required" });
@@ -172,9 +190,10 @@ export async function handleTopicChat(req: Request, res: Response) {
           topicId,
           role: "user",
           content: userMessage,
-          attachmentUrl: attachmentUrl ?? null,
-          attachmentName: attachmentName ?? null,
-          attachmentType: attachmentType ?? null,
+          attachmentUrls: attachmentList.map((a) => a.url),
+          // Coalesced so all three arrays stay the same length and index-aligned.
+          attachmentNames: attachmentList.map((a) => a.name ?? ""),
+          attachmentTypes: attachmentList.map((a) => a.type ?? ""),
         },
       });
       await incrementChatUsage(userId);
@@ -193,17 +212,7 @@ export async function handleTopicChat(req: Request, res: Response) {
 
     let fullResponse = "";
 
-    const chatMessages = attachToLastUserMessage(
-      messages,
-      attachmentUrl
-        ? {
-            url: attachmentUrl,
-            name: attachmentName,
-            type: attachmentType,
-            text: attachmentText,
-          }
-        : null,
-    );
+    const chatMessages = attachToLastUserMessage(messages, attachmentList);
 
     // ── Stream the text explanation ───────────────────────────────────────────
     const textStream = await openai.chat.completions.create({
@@ -330,13 +339,13 @@ export const getTopicChatHistory = catchAsync(async (req: Request, res: Response
       id: true,
       role: true,
       content: true,
-      attachmentUrl: true,
-      attachmentName: true,
-      attachmentType: true,
+      attachmentUrls: true,
+      attachmentNames: true,
+      attachmentTypes: true,
     },
     take: limit,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
 
-  res.json(messages);
+  res.json(messages.map(withLegacyAttachment));
 });

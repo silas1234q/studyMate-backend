@@ -86,11 +86,17 @@ export const handleChatAttachmentUpload = catchAsync(async (req, res) => {
   // Images go to the model natively at chat time, so they only need uploading.
   // Every other format is read once here and injected as text on each send.
   if (mimeType.startsWith("image/")) {
-    const { url } = await uploadFile(buffer, mimeType, "studymate/chat");
+    // storedMimeType, not the uploaded one: an iOS HEIC is converted to JPEG on
+    // the way up, and the client must be told what it actually got.
+    const { url, mimeType: storedMimeType } = await uploadFile(
+      buffer,
+      mimeType,
+      "studymate/chat",
+    );
     res.status(201).json({
       attachmentUrl: url,
       attachmentName: fileName,
-      attachmentType: mimeType,
+      attachmentType: storedMimeType,
       extractedText: "",
     });
     return;

@@ -115,36 +115,79 @@ export type Attachment = {
  */
 export function attachToLastUserMessage(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-  attachment: Attachment | null,
+  attachments: Attachment[] | Attachment | null,
 ): OpenAI.ChatCompletionMessageParam[] {
   const out: OpenAI.ChatCompletionMessageParam[] = [...messages];
-  if (!attachment?.url) return out;
+
+  // A single attachment is accepted as well as a list: the web client still
+  // sends one, and normalising here keeps both callers on one code path.
+  const list = (
+    Array.isArray(attachments) ? attachments : attachments ? [attachments] : []
+  ).filter((a) => !!a?.url);
+  if (list.length === 0) return out;
 
   const lastUserIdx = out.map((m) => m.role).lastIndexOf("user");
   if (lastUserIdx === -1) return out;
 
   const originalText = messages[lastUserIdx]?.content || "Please look at this file.";
-  const mimeType = attachment.type ?? "";
 
-  if (mimeType.startsWith("image/")) {
+  const images = list.filter((a) => (a.type ?? "").startsWith("image/"));
+  // Everything else — PDF included — was read at upload time. Injecting the
+  // extracted text avoids re-downloading and re-encoding the file on every send.
+  const documentText = list
+    .filter((a) => !(a.type ?? "").startsWith("image/") && a.text)
+    .map((d) => `\n\n[Attached file: ${d.name ?? "document"}]\n${(d.text ?? "").slice(0, 6000)}`)
+    .join("");
+
+  if (images.length > 0) {
     out[lastUserIdx] = {
       role: "user",
       content: [
-        { type: "text", text: originalText },
-        { type: "image_url", image_url: { url: attachment.url } },
+        { type: "text", text: `${originalText}${documentText}` },
+        ...images.map((img) => ({
+          type: "image_url" as const,
+          image_url: { url: img.url },
+        })),
       ],
     };
     return out;
   }
 
-  // Everything else — PDF included — was read at upload time. Injecting the
-  // extracted text avoids re-downloading and re-encoding the file on every send.
-  if (attachment.text) {
-    out[lastUserIdx] = {
-      role: "user",
-      content:
-        `${originalText}\n\n[Attached file: ${attachment.name ?? "document"}]\n${attachment.text.slice(0, 6000)}`,
-    };
+  if (documentText) {
+    out[lastUserIdx] = { role: "user", content: `${originalText}${documentText}` };
   }
   return out;
+}
+
+/** Cap on attachments per message, mirrored by the mobile picker. */
+export const MAX_ATTACHMENTS = 5;
+
+type StoredAttachments = {
+  attachmentUrls: string[];
+  attachmentNames: string[];
+  attachmentTypes: string[];
+};
+
+/**
+ * Adds the pre-array `attachmentUrl/Name/Type` fields back onto a message,
+ * populated from the first attachment.
+ *
+ * The web client reads those singular fields and has not been changed, so the
+ * history endpoints keep serving them alongside the arrays. Remove this once
+ * every client reads `attachments`.
+ */
+export function withLegacyAttachment<T extends StoredAttachments>(message: T) {
+  const attachments = message.attachmentUrls.map((url, i) => ({
+    url,
+    name: message.attachmentNames[i] || null,
+    type: message.attachmentTypes[i] || null,
+  }));
+
+  return {
+    ...message,
+    attachments,
+    attachmentUrl: attachments[0]?.url ?? null,
+    attachmentName: attachments[0]?.name ?? null,
+    attachmentType: attachments[0]?.type ?? null,
+  };
 }
