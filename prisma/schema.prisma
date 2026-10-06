@@ -223,6 +223,7 @@ model UsageTracker {
   userId       String
   user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   date         String
+  hashitTopicChatLimit Boolean @default(false)
   chatMessages Int    @default(0)
   quizzes      Int    @default(0)
 

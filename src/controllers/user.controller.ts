@@ -2,7 +2,19 @@ import { catchAsync } from "../utils/catchAsync";
 import { getAuth } from "@clerk/express";
 import AuthError from "../errors/AuthError";
 import ValidationError from "../errors/ValidationError";
-import { saveOnboarding, getUserPreferences, updatePreferences, deleteAccount } from "../services/user.service";
+import {
+  saveOnboarding,
+  getUserPreferences,
+  updatePreferences,
+  deleteAccount,
+} from "../services/user.service";
+import prisma from "../config/db.config";
+import {
+  getUsageToday,
+  getUserSubscription,
+  PLAN_LIMITS,
+  PlanType,
+} from "../services/subscription.service";
 
 function isValidTimezone(tz: string): boolean {
   try {
@@ -12,6 +24,30 @@ function isValidTimezone(tz: string): boolean {
     return false;
   }
 }
+
+export const getDbUser = catchAsync(async (req, res) => {
+  const { userId } = getAuth(req);
+  if (!userId) throw new AuthError("user not authenticated");
+  const user = await prisma.user.findUnique({
+    where: { clerkId: userId },
+    select: {
+      id: true,
+      clerkId: true,
+      createdAt: true,
+      updatedAt: true,
+      usageTrackers: true,
+    },
+  });
+
+  if (!user) throw new AuthError("user not found");
+  const sub = await getUserSubscription(user?.id);
+  const limit = (PLAN_LIMITS[sub.plan as PlanType] ?? PLAN_LIMITS.free)
+    .chatMessagesPerDay;
+  const usage = await getUsageToday(user.id);
+
+  const chatLimitReached = limit !== Infinity && usage.chatMessages >= limit;
+  res.json({...user, chatLimitReached});
+});
 
 export const handleGetPreferences = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
@@ -24,9 +60,16 @@ export const onboardUser = catchAsync(async (req, res) => {
   const { userId } = getAuth(req);
   if (!userId) throw new AuthError("user not authenticated");
 
-  const { educationLevel, studySessionDuration, learningGoal, explanationDepth, interests, timezone } = req.body;
+  const {
+    educationLevel,
+    studySessionDuration,
+    learningGoal,
+    explanationDepth,
+    interests,
+    timezone,
+  } = req.body;
 
-  const error: Record<string, string> = {}
+  const error: Record<string, string> = {};
 
   // if (
   //   typeof educationLevel !== "number" ||
@@ -39,35 +82,39 @@ export const onboardUser = catchAsync(async (req, res) => {
   // }
 
   if (typeof educationLevel !== "number") {
-    error['educationLevel'] = "educationLevel must be a number";
+    error["educationLevel"] = "educationLevel must be a number";
   }
 
   if (typeof studySessionDuration !== "number") {
-    error['studySessionDuration'] = "studySessionDuration must be a number";
+    error["studySessionDuration"] = "studySessionDuration must be a number";
   }
 
   if (typeof explanationDepth !== "number") {
-    error['explanationDepth'] = "explanationDepth must be a number";
+    error["explanationDepth"] = "explanationDepth must be a number";
   }
 
-
   if (typeof learningGoal !== "string") {
-    error['learningGoal'] = "learningGoal must be a string";
+    error["learningGoal"] = "learningGoal must be a string";
   } else if (learningGoal.length > 500) {
-    error['learningGoal'] = "learningGoal must be at most 500 characters";
+    error["learningGoal"] = "learningGoal must be at most 500 characters";
   }
 
   if (!Array.isArray(interests)) {
-    error['interests'] = "interests must be an array";
+    error["interests"] = "interests must be an array";
   } else if (interests.length > 20) {
-    error['interests'] = "interests must have at most 20 items";
-  } else if (interests.some((i: unknown) => typeof i !== "string" || (i as string).length > 50)) {
-    error['interests'] = "each interest must be a string of at most 50 characters";
+    error["interests"] = "interests must have at most 20 items";
+  } else if (
+    interests.some(
+      (i: unknown) => typeof i !== "string" || (i as string).length > 50,
+    )
+  ) {
+    error["interests"] =
+      "each interest must be a string of at most 50 characters";
   }
 
   if (timezone !== undefined) {
     if (typeof timezone !== "string" || !isValidTimezone(timezone)) {
-      error['timezone'] = "timezone must be a valid IANA timezone";
+      error["timezone"] = "timezone must be a valid IANA timezone";
     }
   }
 

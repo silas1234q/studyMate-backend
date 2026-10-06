@@ -25,7 +25,7 @@ export const PLAN_LIMITS = {
   },
 } as const;
 
-type PlanType = keyof typeof PLAN_LIMITS;
+export type PlanType = keyof typeof PLAN_LIMITS;
 
 async function getDbUser(clerkId: string) {
   const user = await prisma.user.findUnique({ where: { clerkId }, select: { id: true } });
@@ -109,12 +109,22 @@ export async function getUsageToday(userId: string) {
 }
 
 export async function incrementUsage(userId: string, field: "chatMessages" | "quizzes") {
+  const sub = await getUserSubscription(userId);
+   const limit = (PLAN_LIMITS[sub.plan as PlanType] ?? PLAN_LIMITS.free).chatMessagesPerDay;
   const date = todayStr();
-  await prisma.usageTracker.upsert({
+
+  const usage = await prisma.usageTracker.upsert({
     where: { userId_date: { userId, date } },
     create: { userId, date, [field]: 1 },
     update: { [field]: { increment: 1 } },
   });
+
+  if (limit !== Infinity && usage.chatMessages >= limit && !usage.hashitTopicChatLimit) {
+    await prisma.usageTracker.update({
+      where: { id: usage.id },
+      data: { hashitTopicChatLimit: true },
+    });
+  }
 }
 
 export async function checkCourseLimit(clerkId: string) {
@@ -139,6 +149,7 @@ export async function checkChatLimit(clerkId: string) {
 
   const usage = await getUsageToday(user.id);
   if (usage.chatMessages >= limits.chatMessagesPerDay) {
+   
     throw new SubscriptionError(
       `Free plan is limited to ${limits.chatMessagesPerDay} chat messages per day. Upgrade to Pro for unlimited messages.`
     );
