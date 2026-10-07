@@ -3,6 +3,10 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
@@ -10,5 +14,6 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"],
   },
 });

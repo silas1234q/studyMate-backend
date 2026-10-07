@@ -49,5 +49,4 @@ export function startStreakAtRiskCron() {
     }
   });
 
-  console.log("[CRON] Streak-at-risk cron started (daily at 18:00 UTC)");
 }

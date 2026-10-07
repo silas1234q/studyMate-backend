@@ -17,7 +17,10 @@ import {
   getDbUser,
 } from "../services/quickchat.service";
 import prisma from "../config/db.config";
-import { checkFeatureAccess, getAiModel } from "../services/subscription.service";
+import {
+  checkFeatureAccess,
+  getAiModel,
+} from "../services/subscription.service";
 import { catchAsync } from "../utils/catchAsync";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -39,7 +42,8 @@ const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
         properties: {
           code: {
             type: "string",
-            description: "Syntactically valid Mermaid.js code (max 12 nodes, concise labels).",
+            description:
+              "Syntactically valid Mermaid.js code (max 12 nodes, concise labels).",
           },
         },
         required: ["code"],
@@ -61,7 +65,7 @@ function sanitizeMessages(raw: unknown[]): ChatMessage[] {
         m !== null &&
         typeof (m as Record<string, unknown>).role === "string" &&
         ALLOWED_ROLES.has((m as Record<string, unknown>).role as string) &&
-        typeof (m as Record<string, unknown>).content === "string"
+        typeof (m as Record<string, unknown>).content === "string",
     )
     .slice(-MAX_MESSAGES)
     .map((m) => ({
@@ -70,52 +74,75 @@ function sanitizeMessages(raw: unknown[]): ChatMessage[] {
     }));
 }
 
-export const handleCreateConversation = catchAsync(async (req: Request, res: Response) => {
-  const { userId } = getAuth(req);
-  if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+export const handleCreateConversation = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
 
-  await checkFeatureAccess(userId, "quickChat");
-  const convo = await createConversation(userId);
-  res.status(201).json(convo);
-});
+    await checkFeatureAccess(userId, "quickChat");
+    const convo = await createConversation(userId);
+    res.status(201).json(convo);
+  },
+);
 
-export const handleListConversations = catchAsync(async (req: Request, res: Response) => {
-  const { userId } = getAuth(req);
-  if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+export const handleListConversations = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
 
-  await checkFeatureAccess(userId, "quickChat");
-  const conversations = await listConversations(userId);
-  res.json(conversations);
-});
+    await checkFeatureAccess(userId, "quickChat");
+    const conversations = await listConversations(userId);
+    res.json(conversations);
+  },
+);
 
-export const handleGetConversation = catchAsync(async (req: Request, res: Response) => {
-  const { userId } = getAuth(req);
-  if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+export const handleGetConversation = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
 
-  const id = req.params.id as string;
-  const messages = await getConversationMessages(userId, id);
-  res.json(messages);
-});
+    const id = req.params.id as string;
+    const messages = await getConversationMessages(userId, id);
+    res.json(messages);
+  },
+);
 
-export const handleDeleteConversation = catchAsync(async (req: Request, res: Response) => {
-  const { userId } = getAuth(req);
-  if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+export const handleDeleteConversation = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
 
-  const id = req.params.id as string;
-  await deleteConversation(userId, id);
-  res.json({ success: true });
-});
+    const id = req.params.id as string;
+    await deleteConversation(userId, id);
+    res.json({ success: true });
+  },
+);
 
 export async function handleQuickChat(req: Request, res: Response) {
   const { userId } = getAuth(req);
-  if (!userId) { res.status(401).json({ message: "Unauthorized" }); return; }
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
 
   await checkFeatureAccess(userId, "quickChat");
 
   const {
     conversationId,
     messages: rawMessages,
-    userMessage,
+    userMessage: rawUserMessage,
     attachmentUrl,
     attachmentName,
     attachmentType,
@@ -124,14 +151,19 @@ export async function handleQuickChat(req: Request, res: Response) {
   } = req.body as {
     conversationId: string;
     messages: unknown[];
-    userMessage: string;
+    userMessage?: string;
     // Legacy singular fields, still sent by the web client.
     attachmentUrl?: string;
     attachmentName?: string;
     attachmentType?: string;
     attachmentText?: string;
     // Mobile sends a list.
-    attachments?: Array<{ url: string; name?: string; type?: string; text?: string }>;
+    attachments?: Array<{
+      url: string;
+      name?: string;
+      type?: string;
+      text?: string;
+    }>;
   };
 
   // One normalised list, whichever shape the client used. Capped so a client
@@ -140,21 +172,43 @@ export async function handleQuickChat(req: Request, res: Response) {
     rawAttachments?.length
       ? rawAttachments
       : attachmentUrl
-        ? [{ url: attachmentUrl, name: attachmentName, type: attachmentType, text: attachmentText }]
+        ? [
+            {
+              url: attachmentUrl,
+              name: attachmentName,
+              type: attachmentType,
+              text: attachmentText,
+            },
+          ]
         : []
   )
     .filter((a) => !!a?.url)
     .slice(0, MAX_ATTACHMENTS);
+  const userMessage =
+    typeof rawUserMessage === "string" ? rawUserMessage.trim() : "";
 
-  if (!conversationId || !Array.isArray(rawMessages) || !userMessage) {
-    res.status(400).json({ message: "conversationId, messages, and userMessage are required" });
+  if (
+    !conversationId ||
+    !Array.isArray(rawMessages) ||
+    (!userMessage && attachmentList.length === 0)
+  ) {
+    res.status(400).json({
+      message:
+        "conversationId, messages, and either userMessage or attachments are required",
+    });
     return;
   }
-
-  if (typeof userMessage !== "string" || userMessage.length > MAX_MESSAGE_LENGTH) {
-    res.status(400).json({ message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters` });
+  if (userMessage.length > MAX_MESSAGE_LENGTH) {
+    res.status(400).json({
+      message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters`,
+    });
     return;
   }
+  const promptText =
+    userMessage ||
+    (attachmentList.length === 1
+      ? "Please look at this file."
+      : "Please look at these files.");
 
   const messages = sanitizeMessages(rawMessages);
 
@@ -176,8 +230,11 @@ export async function handleQuickChat(req: Request, res: Response) {
 
     // Auto-set title from first user message if still default
     if (convo.title === "New Chat") {
-      const title = userMessage.length > 50 ? userMessage.slice(0, 50) + "…" : userMessage;
-      await updateConversationTitle(conversationId, title);
+      const base = userMessage || attachmentList[0]?.name || "";
+      if (base) {
+        const title = base.length > 50 ? base.slice(0, 50) + "…" : base;
+        await updateConversationTitle(conversationId, title);
+      }
     }
 
     const [prefs, aiModel] = await Promise.all([
@@ -191,12 +248,20 @@ export async function handleQuickChat(req: Request, res: Response) {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const wantsVisual = /\b(show|draw|visuali[sz]e|diagram|depict|sketch|display|render)\b/i.test(lastUserMsg);
+    const lastUserMsg =
+      [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const wantsVisual =
+      /\b(show|draw|visuali[sz]e|diagram|depict|sketch|display|render)\b/i.test(
+        lastUserMsg,
+      );
 
     let fullResponse = "";
 
-    const chatMessages = attachToLastUserMessage(messages, attachmentList);
+    const chatMessages = attachToLastUserMessage(
+      messages,
+      attachmentList,
+      promptText,
+    );
 
     const textStream = await openai.chat.completions.create({
       model: aiModel,
@@ -217,7 +282,7 @@ export async function handleQuickChat(req: Request, res: Response) {
     if (wantsVisual) {
       const visualMessages: OpenAI.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
-        ...messages,
+        ...chatMessages,
         { role: "assistant", content: fullResponse },
         {
           role: "user",
