@@ -10,7 +10,11 @@ import {
   MAX_ATTACHMENTS,
 } from "../services/chat.service";
 import prisma from "../config/db.config";
-import { checkChatLimit, incrementChatUsage, getAiModel } from "../services/subscription.service";
+import {
+  checkChatLimit,
+  incrementChatUsage,
+  getAiModel,
+} from "../services/subscription.service";
 import { buildMaterialContext } from "../services/material.service";
 import AppError from "../errors/AppError";
 import { catchAsync } from "../utils/catchAsync";
@@ -34,7 +38,8 @@ const VISUAL_TOOLS: OpenAI.ChatCompletionTool[] = [
         properties: {
           code: {
             type: "string",
-            description: "Syntactically valid Mermaid.js code (max 12 nodes, concise labels).",
+            description:
+              "Syntactically valid Mermaid.js code (max 12 nodes, concise labels).",
           },
         },
         required: ["code"],
@@ -56,7 +61,7 @@ function sanitizeMessages(raw: unknown[]): ChatMessage[] {
         m !== null &&
         typeof (m as Record<string, unknown>).role === "string" &&
         ALLOWED_ROLES.has((m as Record<string, unknown>).role as string) &&
-        typeof (m as Record<string, unknown>).content === "string"
+        typeof (m as Record<string, unknown>).content === "string",
     )
     .slice(-MAX_MESSAGES)
     .map((m) => ({
@@ -108,7 +113,7 @@ export async function handleTopicChat(req: Request, res: Response) {
     messages: rawMessages,
     topicId,
     courseId,
-    userMessage,
+    userMessage: rawUserMessage,
     attachmentUrl,
     attachmentName,
     attachmentType,
@@ -127,7 +132,12 @@ export async function handleTopicChat(req: Request, res: Response) {
     attachmentType?: string;
     attachmentText?: string;
     // Mobile sends a list.
-    attachments?: Array<{ url: string; name?: string; type?: string; text?: string }>;
+    attachments?: Array<{
+      url: string;
+      name?: string;
+      type?: string;
+      text?: string;
+    }>;
   };
 
   // One normalised list, whichever shape the client used. Capped so a client
@@ -136,14 +146,33 @@ export async function handleTopicChat(req: Request, res: Response) {
     rawAttachments?.length
       ? rawAttachments
       : attachmentUrl
-        ? [{ url: attachmentUrl, name: attachmentName, type: attachmentType, text: attachmentText }]
+        ? [
+            {
+              url: attachmentUrl,
+              name: attachmentName,
+              type: attachmentType,
+              text: attachmentText,
+            },
+          ]
         : []
   )
     .filter((a) => !!a?.url)
     .slice(0, MAX_ATTACHMENTS);
+ 
 
-  if (!courseTitle || !topicName || !Array.isArray(rawMessages)) {
-    res.status(400).json({ message: "courseTitle, topicName, and messages are required" });
+  const userMessage =
+    typeof rawUserMessage === "string" ? rawUserMessage.trim() : "";
+
+  if (
+    !courseTitle ||
+    !topicName ||
+    !Array.isArray(rawMessages) ||
+    (!userMessage && attachmentList.length === 0)
+  ) {
+    res.status(400).json({
+      message:
+        "courseTitle, topicName, messages, and either userMessage or attachments are required",
+    });
     return;
   }
 
@@ -155,12 +184,20 @@ export async function handleTopicChat(req: Request, res: Response) {
     res.status(400).json({ message: "Invalid topicName" });
     return;
   }
-  if (userMessage && (typeof userMessage !== "string" || userMessage.length > MAX_MESSAGE_LENGTH)) {
-    res.status(400).json({ message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters` });
+  if (userMessage.length > MAX_MESSAGE_LENGTH) {
+    res.status(400).json({
+      message: `userMessage must be at most ${MAX_MESSAGE_LENGTH} characters`,
+    });
     return;
   }
 
   const messages = sanitizeMessages(rawMessages);
+
+  const promptText =
+    userMessage ||
+    (attachmentList.length === 1
+      ? "Please look at this file."
+      : "Please look at these files.");
 
   try {
     // Check chat limit before processing
@@ -171,7 +208,9 @@ export async function handleTopicChat(req: Request, res: Response) {
     if (topicId) {
       dbUser = await verifyTopicAccess(userId, topicId);
       if (!dbUser) {
-        res.status(403).json({ message: "You do not have access to this topic" });
+        res
+          .status(403)
+          .json({ message: "You do not have access to this topic" });
         return;
       }
     }
@@ -179,11 +218,13 @@ export async function handleTopicChat(req: Request, res: Response) {
     const [prefs, aiModel, material] = await Promise.all([
       getUserPreferences(userId),
       getAiModel(userId),
-      courseId ? buildMaterialContext(courseId, topicId) : Promise.resolve(null),
+      courseId
+        ? buildMaterialContext(courseId, topicId)
+        : Promise.resolve(null),
     ]);
 
     // Persist the user's message and increment usage
-    if (topicId && userMessage && dbUser) {
+    if (topicId && dbUser && (userMessage || attachmentList.length > 0)) {
       await prisma.chatMessage.create({
         data: {
           userId: dbUser.id,
@@ -200,19 +241,29 @@ export async function handleTopicChat(req: Request, res: Response) {
     }
 
     const systemPrompt =
-      buildSystemPrompt(prefs, courseTitle, topicName) + buildMaterialSection(material);
+      buildSystemPrompt(prefs, courseTitle, topicName) +
+      buildMaterialSection(material);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-    const wantsVisual = /\b(show|draw|visuali[sz]e|diagram|depict|sketch|display|render)\b/i.test(lastUserMsg);
+    const lastUserMsg =
+      [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const wantsVisual =
+      /\b(show|draw|visuali[sz]e|diagram|depict|sketch|display|render)\b/i.test(
+        lastUserMsg,
+      );
 
     let fullResponse = "";
 
-    const chatMessages = attachToLastUserMessage(messages, attachmentList);
+    const chatMessages = attachToLastUserMessage(
+      messages,
+      attachmentList,
+      promptText,
+    );
+   
 
     // ── Stream the text explanation ───────────────────────────────────────────
     const textStream = await openai.chat.completions.create({
@@ -234,7 +285,7 @@ export async function handleTopicChat(req: Request, res: Response) {
     if (wantsVisual) {
       const visualMessages: OpenAI.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
-        ...messages,
+        ...chatMessages,
         { role: "assistant", content: fullResponse },
         {
           role: "user",
@@ -267,7 +318,7 @@ export async function handleTopicChat(req: Request, res: Response) {
         }
 
         if (finishReason === "tool_calls" && tcName) {
-          console.log(`[chat] tool called: ${tcName}, args: ${tcArgs}`);
+        
           try {
             const args = JSON.parse(tcArgs) as Record<string, string>;
             let fence = "";
@@ -288,7 +339,12 @@ export async function handleTopicChat(req: Request, res: Response) {
     // Persist the assistant's response
     if (topicId && fullResponse && dbUser) {
       await prisma.chatMessage.create({
-        data: { userId: dbUser.id, topicId, role: "assistant", content: fullResponse },
+        data: {
+          userId: dbUser.id,
+          topicId,
+          role: "assistant",
+          content: fullResponse,
+        },
       });
     }
 
@@ -298,7 +354,9 @@ export async function handleTopicChat(req: Request, res: Response) {
     console.error("[chat] streaming error:", err);
     if (!res.headersSent) {
       if (err instanceof AppError) {
-        res.status(err.statusCode).json({ success: false, type: err.type, message: err.message });
+        res
+          .status(err.statusCode)
+          .json({ success: false, type: err.type, message: err.message });
       } else {
         res.status(500).json({ message: "Failed to stream response" });
       }
@@ -309,43 +367,48 @@ export async function handleTopicChat(req: Request, res: Response) {
   }
 }
 
-export const getTopicChatHistory = catchAsync(async (req: Request, res: Response) => {
-  const { userId } = getAuth(req);
-  if (!userId) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
+export const getTopicChatHistory = catchAsync(
+  async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
 
-  const { topicId } = req.params;
-  if (!topicId || Array.isArray(topicId)) {
-    res.status(400).json({ message: "Invalid topicId" });
-    return;
-  }
+    const { topicId } = req.params;
+    if (!topicId || Array.isArray(topicId)) {
+      res.status(400).json({ message: "Invalid topicId" });
+      return;
+    }
 
-  // Verify the user is enrolled in the course that owns this topic
-  const dbUser = await verifyTopicAccess(userId, topicId);
-  if (!dbUser) {
-    res.status(403).json({ message: "You do not have access to this topic" });
-    return;
-  }
+    // Verify the user is enrolled in the course that owns this topic
+    const dbUser = await verifyTopicAccess(userId, topicId);
+    if (!dbUser) {
+      res.status(403).json({ message: "You do not have access to this topic" });
+      return;
+    }
 
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 100));
-  const cursor = req.query.cursor as string | undefined;
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(req.query.limit as string) || 100),
+    );
+    const cursor = req.query.cursor as string | undefined;
 
-  const messages = await prisma.chatMessage.findMany({
-    where: { userId: dbUser.id, topicId },
-    orderBy: { createdAt: "asc" },
-    select: {
-      id: true,
-      role: true,
-      content: true,
-      attachmentUrls: true,
-      attachmentNames: true,
-      attachmentTypes: true,
-    },
-    take: limit,
-    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-  });
+    const messages = await prisma.chatMessage.findMany({
+      where: { userId: dbUser.id, topicId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        attachmentUrls: true,
+        attachmentNames: true,
+        attachmentTypes: true,
+      },
+      take: limit,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
 
-  res.json(messages.map(withLegacyAttachment));
-});
+    res.json(messages.map(withLegacyAttachment));
+  },
+);

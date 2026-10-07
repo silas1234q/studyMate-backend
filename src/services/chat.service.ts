@@ -116,6 +116,7 @@ export type Attachment = {
 export function attachToLastUserMessage(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   attachments: Attachment[] | Attachment | null,
+  promptText: string
 ): OpenAI.ChatCompletionMessageParam[] {
   const out: OpenAI.ChatCompletionMessageParam[] = [...messages];
 
@@ -129,7 +130,7 @@ export function attachToLastUserMessage(
   const lastUserIdx = out.map((m) => m.role).lastIndexOf("user");
   if (lastUserIdx === -1) return out;
 
-  const originalText = messages[lastUserIdx]?.content || "Please look at this file.";
+  const originalText = messages[lastUserIdx]?.content || promptText;
 
   const images = list.filter((a) => (a.type ?? "").startsWith("image/"));
   // Everything else — PDF included — was read at upload time. Injecting the

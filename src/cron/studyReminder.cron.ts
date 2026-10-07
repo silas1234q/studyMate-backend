@@ -87,5 +87,5 @@ export function startStudyReminderCron() {
     }
   });
 
-  console.log("[CRON] Study reminder cron started (every 15 min)");
+
 }

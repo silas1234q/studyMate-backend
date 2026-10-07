@@ -12,7 +12,7 @@ const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const users = await prisma.user.findMany({ select: { id: true } });
-  console.log(`Found ${users.length} existing users to grandfather...`);
+
 
   let created = 0;
   for (const user of users) {
