@@ -119,12 +119,6 @@ export async function incrementUsage(userId: string, field: "chatMessages" | "qu
     update: { [field]: { increment: 1 } },
   });
 
-  if (limit !== Infinity && usage.chatMessages >= limit && !usage.hashitTopicChatLimit) {
-    await prisma.usageTracker.update({
-      where: { id: usage.id },
-      data: { hashitTopicChatLimit: true },
-    });
-  }
 }
 
 export async function checkCourseLimit(clerkId: string) {
