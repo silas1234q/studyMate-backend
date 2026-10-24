@@ -12,6 +12,7 @@ import {
   cancelSubscription as paystackCancel,
   listCustomerSubscriptions,
 } from "../services/paystack.service";
+import { Prisma } from "../../generated/prisma/client";
 
 // Amounts in pesewas (Paystack API uses subunits). All plans are in GHS.
 // GHS plans: GHS 15/mo, GHS 100/yr
@@ -22,6 +23,48 @@ const PLANS: Record<string, { code: string | undefined; amount: number }> = {
   "monthly_INT": { code: process.env.PAYSTACK_PRO_MONTHLY_INT_PLAN_CODE, amount: 3000 },
   "yearly_INT":  { code: process.env.PAYSTACK_PRO_YEARLY_INT_PLAN_CODE,  amount: 24000 },
 };
+type RevenueCatEvent = {
+  id: string;
+  type: string;
+  app_user_id: string;
+  product_id?: string;
+  new_product_id?: string | null;        // PRODUCT_CHANGE
+  entitlement_ids?: string[] | null;
+  expiration_at_ms?: number | null;
+  purchased_at_ms?: number | null;
+  event_timestamp_ms?: number;
+  original_transaction_id?: string | null;
+  store?: string;
+  environment?: string;
+  cancel_reason?: string | null;
+};
+
+type RevenueCatPayload = {
+  event: RevenueCatEvent;
+};
+
+const PLAN = "pro"; // same value Paystack uses
+
+const safeEqual = (a: string, b: string) => {
+  const A = Buffer.from(a), B = Buffer.from(b);
+  return A.length === B.length && crypto.timingSafeEqual(A, B);
+};
+
+const intervalOf = (productId?: string | null) =>
+  productId?.includes("yearly") ? "yearly" : productId?.includes("monthly") ? "monthly" : null;
+
+
+
+// function getPlan(productId?: string): string {
+//   switch (productId) {
+//     case 'studymate_premium_monthly':
+//       return 'premium';
+//     case 'studymate_premium_yearly':
+//       return 'premium';
+//     default:
+//       return 'premium';
+//   }
+// }
 
 export const handleGetSubscription = catchAsync(
   async (req: Request, res: Response) => {
@@ -407,3 +450,181 @@ export const handleWebhook = async (req: Request, res: Response) => {
   // Always return 200 to acknowledge
   res.status(200).json({ received: true });
 };
+
+export const handleRevenuecatWebhook = async (req: Request, res: Response) => {
+  const expected = process.env.REVENUECAT_WEBHOOK_AUTHORIZATION;
+  if (!expected || !safeEqual(req.headers.authorization ?? "", expected)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const event = (req.body as { event?: RevenueCatEvent })?.event;
+  if (!event?.id || !event.type || !event.app_user_id) {
+    res.status(400).json({ error: "Invalid RevenueCat event" });
+    return;
+  }
+  if (event.type === "TEST") {
+    res.status(200).json({ received: true });
+    return;
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Idempotency: count === 0 means we've seen this event
+      const inserted = await tx.revenueCatWebhookEvent.createMany({
+        data: [{ id: event.id, eventType: event.type }],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) return;
+
+      // app_user_id may be your DB id or the Clerk id depending on logIn()
+      const user = await tx.user.findFirst({
+        where: { OR: [{ id: event.app_user_id }, { clerkId: event.app_user_id }] },
+        select: { id: true },
+      });
+      if (!user) {
+        // anonymous ids / unknown users: ack so RevenueCat doesn't retry
+        console.warn("[revenuecat] no user for", event.app_user_id, event.type);
+        return;
+      }
+
+      const now = new Date();
+      const eventAt = new Date(event.event_timestamp_ms ?? now.getTime());
+      const existing = await tx.subscription.findUnique({ where: { userId: user.id } });
+
+      // Ignore stale / out-of-order events
+      if (existing?.lastEventAt && existing.lastEventAt > eventAt) return;
+
+      const expiration = event.expiration_at_ms != null ? new Date(event.expiration_at_ms) : null;
+      const purchased = event.purchased_at_ms != null ? new Date(event.purchased_at_ms) : now;
+      const isExpired = !!expiration && expiration <= now;
+      const productId = event.new_product_id ?? event.product_id;
+
+      const base = {
+        billingProvider: "revenuecat",
+        revenueCatAppUserId: event.app_user_id,
+        revenueCatProductId: productId ?? null,
+        store: event.store ?? null,
+        originalTransactionId: event.original_transaction_id ?? null,
+        isSandbox: event.environment === "SANDBOX",
+        lastVerifiedAt: now,
+        lastEventAt: eventAt,
+      };
+
+      let data: Record<string, unknown> | null = null;
+
+      switch (event.type) {
+        case "INITIAL_PURCHASE":
+        case "RENEWAL":
+        case "UNCANCELLATION":
+        case "SUBSCRIPTION_EXTENDED":
+        case "PRODUCT_CHANGE":
+        case "REFUND_REVERSED":
+          data = {
+            ...base,
+            plan: isExpired ? "free" : PLAN,
+            status: isExpired ? "expired" : "active",
+            interval: intervalOf(productId) ?? existing?.interval ?? null,
+            revenueCatEntitlementId: "premium",
+            currentPeriodStart: purchased,
+            currentPeriodEnd: expiration,
+            cancelledAt: null,
+            willRenew: true,
+          };
+          break;
+
+        case "CANCELLATION":
+          if (event.cancel_reason === "CUSTOMER_SUPPORT") {
+            // refund → revoke immediately
+            data = { ...base, plan: "free", status: "expired", revenueCatEntitlementId: null,
+                     currentPeriodEnd: now, cancelledAt: now, willRenew: false };
+          } else {
+            // auto-renew off; access continues until expiration
+            data = { ...base, status: isExpired ? "expired" : "cancelled",
+                     currentPeriodEnd: expiration ?? existing?.currentPeriodEnd,
+                     cancelledAt: now, willRenew: false };
+          }
+          break;
+
+        case "EXPIRATION":
+          data = { ...base, plan: "free", status: "expired", revenueCatEntitlementId: null,
+                   currentPeriodEnd: expiration ?? now, willRenew: false };
+          break;
+
+        case "BILLING_ISSUE":
+          data = { ...base, status: "past_due" };
+          break;
+      }
+
+      if (!data) return;
+
+      await tx.subscription.upsert({
+        where: { userId: user.id },
+        create: { userId: user.id, ...(data as any) },
+        update: data as any,
+      });
+    });
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error("RevenueCat webhook failed:", error);
+    res.status(500).json({ error: "Webhook processing failed" });
+  }
+};
+
+export const handleSyncRevenuecat = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = getAuth(req);
+  if (!userId) throw new AuthError("user not authenticated");
+
+  const user = await prisma.user.findUnique({
+    where: { clerkId: userId },
+    select: { id: true },
+  });
+  if (!user) throw new AuthError("user not found");
+
+  // Must be the same ID the app passes to Purchases.logIn()
+  const rcRes = await fetch(
+    `https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(user.id)}`,
+    { headers: { Authorization: `Bearer ${process.env.REVENUECAT_SECRET_API_KEY}` } },
+  );
+  if (!rcRes.ok) throw new Error(`RevenueCat lookup failed: ${rcRes.status}`);
+
+  const { subscriber } = await rcRes.json();
+  const ent = subscriber?.entitlements?.premium;
+
+  const expiresAt = ent?.expires_date ? new Date(ent.expires_date) : null; // null = lifetime
+  const isActive = !!ent && (!expiresAt || expiresAt > new Date());
+
+  if (!isActive) {
+    res.json({ success: true, plan: "free", active: false });
+    return;
+  }
+
+  const productId: string = ent.product_identifier;
+  const sub = subscriber.subscriptions?.[productId];
+
+  const data = {
+    billingProvider: "revenuecat",
+    plan: "pro",
+    status: sub?.unsubscribe_detected_at ? "cancelled" : "active",
+    interval: productId.includes("yearly") ? "yearly" : productId.includes("monthly") ? "monthly" : null,
+    revenueCatAppUserId: user.id,
+    revenueCatProductId: productId,
+    revenueCatEntitlementId: "premium",
+    store: sub?.store ?? null,
+    isSandbox: !!sub?.is_sandbox,
+    willRenew: !sub?.unsubscribe_detected_at,
+    currentPeriodStart: ent.purchase_date ? new Date(ent.purchase_date) : new Date(),
+    currentPeriodEnd: expiresAt,
+    lastVerifiedAt: new Date(),
+    // don't touch lastEventAt: that field belongs to the webhook's ordering check
+  };
+
+  await prisma.subscription.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, ...data },
+    update: data,
+  });
+
+  res.json({ success: true, plan: "pro", active: true });
+});

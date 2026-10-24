@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 import { clerkMiddleware } from "@clerk/express";
 import routes from "./routes";
 import { globalErrorHandler } from "./middleware/globalErrorHandler";
-import { handleWebhook } from "./controllers/subscription.controller";
+import { handleRevenuecatWebhook, handleWebhook } from "./controllers/subscription.controller";
 
 const app = express();
 
@@ -38,6 +38,9 @@ app.use(rateLimit({
 
 // Webhook needs raw body for HMAC verification — mount before express.json()
 app.post("/api/subscription/webhook", express.raw({ type: "application/json" }), handleWebhook);
+
+app.post("/api/subscription/revenuecat/webhook", express.json(), handleRevenuecatWebhook);
+
 
 app.use(express.json({ limit: "1mb" }));
 app.use(clerkMiddleware());
