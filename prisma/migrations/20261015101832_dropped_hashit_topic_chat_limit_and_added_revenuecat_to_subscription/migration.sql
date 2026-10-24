@@ -16,7 +16,7 @@ ADD COLUMN     "store" TEXT,
 ADD COLUMN     "willRenew" BOOLEAN;
 
 -- AlterTable
-ALTER TABLE "UsageTracker" DROP COLUMN "hashitTopicChatLimit";
+ALTER TABLE "UsageTracker" DROP COLUMN IF EXISTS "hashitTopicChatLimit";
 
 -- CreateIndex
 CREATE INDEX "Subscription_billingProvider_status_idx" ON "Subscription"("billingProvider", "status");
