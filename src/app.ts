@@ -17,10 +17,34 @@ app.set("trust proxy", 1);
 app.use(helmet());
 
 // CORS — whitelist allowed origins
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(",") ?? "http://localhost:5173",
-  credentials: true,
-}));
+const allowedOrigins = (
+  process.env.ALLOWED_ORIGINS ?? ''
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Native clients and other non-browser clients
+      // may not send an Origin header.
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error(`Origin ${origin} is not allowed by CORS`),
+      );
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }),
+);
 
 // Logging — only in development
 if (process.env.NODE_ENV !== "production") {
