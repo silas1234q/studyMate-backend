@@ -5,12 +5,14 @@ import {
   handleInitiateUpgrade,
   handleVerifyPayment,
   handleCancelSubscription,
+  handleSyncRevenuecat
 } from "../controllers/subscription.controller";
 
 const router = Router();
 
 router.get("/", requireClerkAuth, handleGetSubscription);
 router.post("/upgrade", requireClerkAuth, handleInitiateUpgrade);
+router.post("/revenuecat",requireClerkAuth,handleSyncRevenuecat)
 router.get("/verify", requireClerkAuth, handleVerifyPayment);
 router.post("/cancel", requireClerkAuth, handleCancelSubscription);
 // Webhook is mounted separately in app.ts (needs raw body)

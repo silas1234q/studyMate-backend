@@ -38,54 +38,60 @@ const EARLY_ADOPTER_LIMIT = 10;
 // All new users get a 3-day Pro trial
 const TRIAL_DAYS = 3;
 
+const RC_GRACE_MS = 6 * 60 * 60 * 1000; // late-renewal buffer for mobile subscribers
+
 export async function getUserSubscription(userId: string) {
   let sub = await prisma.subscription.findUnique({ where: { userId } });
-  if (!sub) {
-    // Check if this user qualifies for early adopter bonus (first 20 users)
-    const totalSubscriptions = await prisma.subscription.count();
-    const isEarlyAdopter = totalSubscriptions < EARLY_ADOPTER_LIMIT;
 
+  if (!sub) {
+    // First 20 subscriptions get 3 months of Pro, everyone else gets TRIAL_DAYS
+    const total = await prisma.subscription.count();
     const now = new Date();
-    if (isEarlyAdopter) {
-      // First 20 users: 3 months free Pro
-      const trialEnd = new Date(now);
+    const trialEnd = new Date(now);
+    if (total < EARLY_ADOPTER_LIMIT) {
       trialEnd.setMonth(trialEnd.getMonth() + 3);
-      sub = await prisma.subscription.create({
-        data: {
-          userId,
-          plan: "pro",
-          status: "active",
-          currentPeriodStart: now,
-          currentPeriodEnd: trialEnd,
-        },
-      });
     } else {
-      // All other new users: 3-day free trial of Pro
-      const trialEnd = new Date(now);
       trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
-      sub = await prisma.subscription.create({
-        data: {
-          userId,
-          plan: "pro",
-          status: "active",
-          currentPeriodStart: now,
-          currentPeriodEnd: trialEnd,
-        },
-      });
     }
+
+    // upsert so two concurrent first requests (or a webhook that got there first)
+    // return the existing row instead of throwing a unique-constraint error
+    sub = await prisma.subscription.upsert({
+      where: { userId },
+      update: {},
+      create: {
+        userId,
+        plan: "pro",
+        status: "active",
+        currentPeriodStart: now,
+        currentPeriodEnd: trialEnd,
+      },
+    });
   }
 
-  // Check if a non-Paystack trial/promo has expired → downgrade to free
-  if (
+  // Expire Pro rows that have no Paystack subscription behind them:
+  // trials, GHS one-time payments and RevenueCat subscribers.
+  const graceMs = sub.billingProvider === "revenuecat" ? RC_GRACE_MS : 0;
+  const expired =
     sub.plan === "pro" &&
     !sub.paystackSubscriptionCode &&
-    sub.currentPeriodEnd &&
-    new Date() > sub.currentPeriodEnd
-  ) {
-    sub = await prisma.subscription.update({
-      where: { id: sub.id },
+    !!sub.currentPeriodEnd &&
+    Date.now() > sub.currentPeriodEnd.getTime() + graceMs;
+
+  if (expired) {
+    // Optimistic update: only downgrade if the row still has the period end we
+    // read. If a RENEWAL webhook extended it in the meantime, count is 0 and
+    // we keep the webhook's data instead of overwriting it.
+    const { count } = await prisma.subscription.updateMany({
+      where: { id: sub.id, plan: "pro", currentPeriodEnd: sub.currentPeriodEnd },
       data: { plan: "free", status: "expired" },
     });
+
+    if (count === 0) {
+      sub = await prisma.subscription.findUniqueOrThrow({ where: { userId } });
+    } else {
+      sub = { ...sub, plan: "free", status: "expired" };
+    }
   }
 
   return sub;
@@ -174,33 +180,49 @@ export async function checkFeatureAccess(clerkId: string, feature: "quickChat" |
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export async function getSubscriptionStatus(clerkId: string) {
   const user = await getDbUser(clerkId);
-  const sub = await getUserSubscription(user.id);
-  const plan = (sub.plan as PlanType) ?? "free";
-  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
-  const usage = await getUsageToday(user.id);
-  const courseCount = await prisma.enrollment.count({ where: { userId: user.id } });
+  const sub = await getUserSubscription(user.id); // already downgrades expired non-Paystack subs
 
-  // Determine if this is a trial (Pro without Paystack subscription and not a GHS one-time payment)
-  const isGhsOneTime = sub.plan === "pro" && sub.currency === "GHS" && !sub.paystackSubscriptionCode && !!sub.paystackCustomerCode;
-  const isTrial = sub.plan === "pro" && !sub.paystackSubscriptionCode && !isGhsOneTime && !!sub.currentPeriodEnd;
+  const [usage, courseCount] = await Promise.all([
+    getUsageToday(user.id),
+    prisma.enrollment.count({ where: { userId: user.id } }),
+  ]);
 
-  // Early adopter = trial period longer than 30 days (3 months vs 3 days)
+  // Unknown plan strings (e.g. a stray "premium") fall back to free limits, but loudly
+  const plan: PlanType = sub.plan in PLAN_LIMITS ? (sub.plan as PlanType) : "free";
+  if (plan !== sub.plan) {
+    console.warn(`[subscription] unknown plan "${sub.plan}" for user ${user.id}, using free limits`);
+  }
+  const limits = PLAN_LIMITS[plan];
+
+  const isPro = sub.plan === "pro";
+  const isPaystack = sub.billingProvider === "paystack"; // default for trials too
+  const hasPaystackSub = !!sub.paystackSubscriptionCode;
+
+  // GHS one-time payment: Paystack, Pro, no recurring subscription, has a customer code
+  const isOneTimePayment =
+    isPaystack && isPro && sub.currency === "GHS" && !hasPaystackSub && !!sub.paystackCustomerCode;
+
+  // Trial / promo: Pro row created by getUserSubscription (no payment of any kind)
+  const isTrial =
+    isPaystack && isPro && !hasPaystackSub && !isOneTimePayment && !!sub.currentPeriodEnd;
+
+  // Early adopter = promo longer than 30 days (3 months vs 3 days)
   const isEarlyAdopter =
     isTrial &&
     !!sub.currentPeriodStart &&
     !!sub.currentPeriodEnd &&
-    sub.currentPeriodEnd.getTime() - sub.currentPeriodStart.getTime() > 30 * 24 * 60 * 60 * 1000;
+    sub.currentPeriodEnd.getTime() - sub.currentPeriodStart.getTime() > 30 * DAY_MS;
 
-  // One-time payment: GHS Pro user without Paystack subscription (not a trial)
-  const isOneTimePayment = isGhsOneTime && !isTrial;
-
-  // Renewal due in days for active one-time payment users
   let renewalDueInDays: number | null = null;
   if (isOneTimePayment && sub.status === "active" && sub.currentPeriodEnd) {
-    const msLeft = sub.currentPeriodEnd.getTime() - Date.now();
-    renewalDueInDays = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+    renewalDueInDays = Math.max(
+      0,
+      Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / DAY_MS),
+    );
   }
 
   return {
@@ -210,11 +232,18 @@ export async function getSubscriptionStatus(clerkId: string) {
     currency: sub.currency,
     currentPeriodEnd: sub.currentPeriodEnd,
     cancelledAt: sub.cancelledAt,
-    hasPaystackSubscription: !!sub.paystackSubscriptionCode,
+
+    // provider info so the client can pick the right manage/cancel UI
+    billingProvider: sub.billingProvider,
+    store: sub.store,
+    willRenew: sub.willRenew,
+
+    hasPaystackSubscription: hasPaystackSub,
     isTrial,
     isEarlyAdopter,
     isOneTimePayment,
     renewalDueInDays,
+
     limits: {
       maxCourses: limits.maxCourses === Infinity ? null : limits.maxCourses,
       chatMessagesPerDay: limits.chatMessagesPerDay === Infinity ? null : limits.chatMessagesPerDay,
@@ -231,7 +260,6 @@ export async function getSubscriptionStatus(clerkId: string) {
     },
   };
 }
-
 export async function getAiModel(clerkId: string): Promise<string> {
   const user = await getDbUser(clerkId);
   const sub = await getUserSubscription(user.id);
