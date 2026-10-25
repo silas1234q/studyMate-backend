@@ -81,7 +81,7 @@ export const updateSchedule = async (
   }
   if (data.time !== undefined) {
     validateTime(data.time);
-    updateData.time = snapTo15Min(data.time);
+    updateData.time = data.time;
   }
   if (data.isActive !== undefined) {
     updateData.isActive = data.isActive;
